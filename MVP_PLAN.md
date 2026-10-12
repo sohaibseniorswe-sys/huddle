@@ -21,9 +21,17 @@ Planning is done before Huddle runs. The milestone, its issues, the control issu
 | Repo | Role |
 |------|------|
 | `sohaibseniorswe-sys/huddle` | This repo. Huddle's source code. Go module `github.com/sohaibseniorswe-sys/huddle`. |
-| `sohaibseniorswe-sys/palantir` | The target, **hardcoded** in Huddle. Huddle is run from inside a local clone of it. |
+| `sohaibseniorswe-sys/palantir` | The real target. The **default**, hardcoded in Huddle. |
+| `sohaibseniorswe-sys/huddle-sandbox` | A throwaway target for development and early runs (section 4b). Selected with `--repo`. |
 
-Platform: Linux (WSL). Single foreground process: `cd ~/code/palantir && huddle`.
+Huddle always runs from inside a local clone of its target repo. The target is `sohaibseniorswe-sys/palantir` unless `--repo owner/name` is given. `--repo` exists so that early, buggy runs create branches, PRs and comments in the sandbox, never in palantir. Palantir only sees Huddle once the full loop works in the sandbox.
+
+Platform: Linux (WSL). The author keeps projects in `~/projects`. Single foreground process, for example:
+
+```bash
+cd ~/projects/huddle-sandbox && huddle --repo sohaibseniorswe-sys/huddle-sandbox
+cd ~/projects/palantir && huddle
+```
 
 ## 3. Hard constraints
 
@@ -31,11 +39,11 @@ Platform: Linux (WSL). Single foreground process: `cd ~/code/palantir && huddle`
 2. **Huddle alone owns the control issue.** Only Huddle changes its `state:*` label and posts on it. Agents work in the work plane (branches, PRs, comments on work issues).
 3. **Never touch `main` directly.** Agents work on `agent/issue-<n>` branches. The human merges PRs.
 4. **One agent at a time.** Never run two agent processes concurrently.
-5. **Agent commands are hardcoded** (section 6). No config file in the MVP.
+5. **Agent commands are hardcoded** (section 6). No config file in the MVP. The target repo is hardcoded to palantir, with `--repo` as the only override, for testing.
 
-## 4. Prerequisites in `palantir` (not built by Huddle)
+## 4. Prerequisites in the target repo (not built by Huddle)
 
-The human sets these up before running Huddle. Huddle checks for them at startup.
+These must exist in whichever repo Huddle targets: the sandbox (section 4b) and later palantir. Huddle checks for them at startup.
 
 - `AGENTS.md` (committed): rules for both agents, including:
   - Dev works on branch `agent/issue-<n>`, one PR per issue, never pushes to `main`.
@@ -45,7 +53,7 @@ The human sets these up before running Huddle. Huddle checks for them at startup
 - `CLAUDE.md` (committed): one line, `Read and follow AGENTS.md and Session.md.`
 - `Session.md`: **gitignored**, so both agents share one copy on disk regardless of the checked-out branch. Huddle creates it empty if missing.
 - `.gitignore` contains `Session.md`.
-- Exactly one open issue labelled `control` (the control issue, #58). Its body contains:
+- Exactly one open issue labelled `control` (in palantir this is #58). Its body contains:
 
   ```markdown
   ## First Dev task
@@ -56,9 +64,113 @@ The human sets these up before running Huddle. Huddle checks for them at startup
 
 - The control issue is assigned to the milestone being worked on.
 
+## 4b. Sandbox repo
+
+`sohaibseniorswe-sys/huddle-sandbox` is a tiny, disposable Go repo set up exactly like palantir, so the full loop (including "CI runs") can be exercised without touching real work. It is created in issue 1.4, by the human or by Claude Code with the commands below.
+
+**Create the repo and its code**
+
+```bash
+cd ~/projects
+gh repo create sohaibseniorswe-sys/huddle-sandbox --private --add-readme --clone
+cd huddle-sandbox
+go mod init github.com/sohaibseniorswe-sys/huddle-sandbox
+
+cat > strutil.go <<'EOF'
+package sandbox
+
+import "strings"
+
+// Upper returns s in upper case.
+func Upper(s string) string { return strings.ToUpper(s) }
+EOF
+
+cat > strutil_test.go <<'EOF'
+package sandbox
+
+import "testing"
+
+func TestUpper(t *testing.T) {
+	if got := Upper("huddle"); got != "HUDDLE" {
+		t.Fatalf("Upper() = %q, want %q", got, "HUDDLE")
+	}
+}
+EOF
+
+mkdir -p .github/workflows
+cat > .github/workflows/ci.yml <<'EOF'
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: go test ./...
+EOF
+```
+
+**Add the agent files (same rules as palantir)**
+
+```bash
+cat > AGENTS.md <<'EOF'
+# Agent rules
+
+## Working with Huddle
+- Dev: work on branch agent/issue-<n>, one PR per issue. Never push to main.
+- Dev: run `go test ./...` before finishing.
+- Both agents: read Session.md at the start of every turn and update it at the end.
+- PM: only edit Session.md. Never edit code, labels, or the control issue.
+EOF
+echo "Read and follow AGENTS.md and Session.md." > CLAUDE.md
+echo "Session.md" > .gitignore
+touch Session.md
+go test ./...
+git add -A && git commit -m "Sandbox setup" && git push
+```
+
+**Create the milestone, labels, work issues and control issue**
+
+```bash
+S=sohaibseniorswe-sys/huddle-sandbox
+gh api repos/$S/milestones -f title="Sandbox M1" > /dev/null
+gh label create control --repo $S --color 5319e7 --force
+gh label create "state:dev-ready" --repo $S --color 7057ff --force
+
+I1=$(gh issue create --repo $S --milestone "Sandbox M1" \
+  --title "Add Reverse(s string) string" \
+  --body "Add a Reverse function that reverses a string by runes, with a doc comment.
+Acceptance: table-driven tests covering an empty string, an ASCII string and a string containing an emoji; go test passes." \
+  | grep -o '[0-9]*$')
+
+I2=$(gh issue create --repo $S --milestone "Sandbox M1" \
+  --title "Document Upper and Reverse in the README" \
+  --body "Add a Usage section to README.md with one example each for Upper and Reverse.
+Acceptance: README has a Usage section covering both functions." \
+  | grep -o '[0-9]*$')
+
+gh issue create --repo $S --milestone "Sandbox M1" --label control \
+  --title "Sandbox Control" --body "## Goal
+Exercise the Huddle loop end to end on two small issues (#$I1, #$I2).
+
+## First Dev task
+Target issue: #$I1
+Prompt:
+Implement issue #$I1 exactly as described, including its acceptance criteria. Open a PR that closes #$I1."
+```
+
+To start a run, add `state:dev-ready` to the sandbox control issue.
+
+**Resetting the sandbox between runs**
+
+Close open PRs and delete `agent/*` branches, reopen the two work issues, remove all `state:*` labels from the control issue, and delete Huddle's comments on it (or simply close it and create a fresh control issue with the command above). If the sandbox gets too messy, delete and recreate it: `gh repo delete sohaibseniorswe-sys/huddle-sandbox --yes` (needs `gh auth refresh -s delete_repo` once).
+
 ## 5. Labels
 
-Huddle creates these on `palantir` if missing (idempotent):
+Huddle creates these on the target repo if missing (idempotent):
 
 | Label | Meaning |
 |-------|---------|
@@ -90,7 +202,7 @@ PM:   claude -p "<prompt>" --output-format json --permission-mode acceptEdits \
 
 ```
 $ huddle
-✔ git repo ~/code/palantir, remote sohaibseniorswe-sys/palantir
+✔ git repo ~/projects/palantir, remote sohaibseniorswe-sys/palantir
 ✔ working tree clean
 ✔ gh logged in, repo access ok, labels ready
 ✔ codex and claude installed, no API keys in env
@@ -98,9 +210,9 @@ $ huddle
 Continue? [Y/n]
 ```
 
-1. Current directory is inside a git repo, and its `origin` remote is `sohaibseniorswe-sys/palantir` (accept HTTPS and SSH URL forms, with or without `.git`).
+1. Current directory is inside a git repo, and its `origin` remote is the target repo: `sohaibseniorswe-sys/palantir`, or the `--repo` value if given (accept HTTPS and SSH URL forms, with or without `.git`). When `--repo` is used, print a clear line such as `target: sohaibseniorswe-sys/huddle-sandbox (override)`.
 2. Working tree is clean (`git status --porcelain` is empty, ignoring `Session.md`).
-3. `gh auth status` succeeds; `gh repo view sohaibseniorswe-sys/palantir` succeeds.
+3. `gh auth status` succeeds; `gh repo view <target>` succeeds.
 4. Ensure all labels exist (this also proves write access).
 5. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are not set.
 6. `codex` and `claude` are on `PATH`. If either CLI offers a reliable non-billable way to show its login method, use it and require a subscription login; if not, document that in the README and rely on check 5.
@@ -188,7 +300,7 @@ Write table-driven tests covering messy real-world outputs: fenced JSON, prose a
 Embed both with `go:embed` from `prompts/dev.md` and `prompts/pm.md`.
 
 **Dev preamble** (outline):
-- You are the Dev agent on `sohaibseniorswe-sys/palantir`. Read `AGENTS.md` and `Session.md` first.
+- You are the Dev agent on `<target repo>`. Read `AGENTS.md` and `Session.md` first.
 - Your task is below. Work on branch `agent/issue-<target>` (create it, or check it out if it exists and continue the work there).
 - Commit, run the tests, push, and open or update a PR that references the issue.
 - Before finishing, update `Session.md` with what you did, what is left, and any questions.
@@ -225,25 +337,29 @@ Shell out to `git`, `gh`, `codex` and `claude`. Prefer the standard library; avo
 
 ## Milestones
 
-Estimated total: **10 to 16 hours**, most of the uncertainty in Milestone 5.
+Estimated total: **11 to 18 hours**, most of the uncertainty in Milestone 5.
 
 ### Milestone 1: Skeleton and startup checks (2–3 h)
 
 **1.1 Project skeleton**
-- Go module, layout from section 11, `huddle --version`, `--yes`, `--once` flags (no-ops for now).
-- Acceptance: `go build ./...` and `go test ./...` pass; `huddle --version` prints a version.
+- Go module, layout from section 11, `huddle --version`, `--yes`, `--once` flags (no-ops for now), and `--repo owner/name` (default `sohaibseniorswe-sys/palantir`).
+- Acceptance: `go build ./...` and `go test ./...` pass; `huddle --version` prints a version; `--repo` rejects values that are not `owner/name`.
 
 **1.2 Local repo checks**
-- Section 7 checks 1, 2 and 8. Remote URL parsing for HTTPS and SSH forms.
-- Acceptance: unit tests for URL parsing (at least 6 forms) and for the clean-tree check ignoring `Session.md`.
+- Section 7 checks 1, 2 and 8. Remote URL parsing for HTTPS and SSH forms, compared against the target repo.
+- Acceptance: unit tests for URL parsing (at least 6 forms), for matching against both the default and an overridden target, and for the clean-tree check ignoring `Session.md`.
 
 **1.3 GitHub checks**
 - `gh` wrapper interface plus a fake for tests. Section 7 checks 3, 4 and 7. Idempotent label creation.
 - Acceptance: tests with the fake cover zero, one and several control issues, and a control issue without a milestone.
 
-**1.4 Billing guard and confirmation**
+**1.4 Sandbox repo**
+- Create `sohaibseniorswe-sys/huddle-sandbox` with the commands in section 4b (ask the human before running `gh repo create`, as it creates a repo on their account).
+- Acceptance: the sandbox exists with passing CI on `main`, two work issues and a control issue in milestone "Sandbox M1"; a local clone is at `~/projects/huddle-sandbox`.
+
+**1.5 Billing guard and confirmation**
 - Section 7 checks 5, 6 and 9. Investigate each CLI's `--help` for a login-status command and report findings.
-- Acceptance: Huddle refuses to start when either API key variable is set (tested). Running `huddle` in a real `palantir` clone prints the startup summary and asks to continue.
+- Acceptance: Huddle refuses to start when either API key variable is set (tested). Running `huddle --repo sohaibseniorswe-sys/huddle-sandbox` in the sandbox clone prints the startup summary and asks to continue.
 
 ### Milestone 2: Agent runner (2–3 h)
 
@@ -253,7 +369,7 @@ Estimated total: **10 to 16 hours**, most of the uncertainty in Milestone 5.
 
 **2.2 Hardcoded agent commands**
 - Dev and PM command builders from section 6. Verify every flag against the installed CLIs; update the commands if needed; record versions and final commands in `README.md`.
-- Acceptance: a manual smoke test runs each CLI once with a trivial prompt ("Reply with the word OK") from the `palantir` clone, and the README documents the result.
+- Acceptance: a manual smoke test runs each CLI once with a trivial prompt ("Reply with the word OK") from the sandbox clone, and the README documents the result.
 
 ### Milestone 3: Control issue and facts (1–2 h)
 
@@ -279,13 +395,19 @@ Estimated total: **10 to 16 hours**, most of the uncertainty in Milestone 5.
 - Section 8 in full: Dev turn, PM turn, repair retry, `done` verification, interrupted-run detection, human-required polling, turn limit, Ctrl+C, `--once`.
 - Acceptance: tests with a fake runner and fake `gh` cover: dev → pm → continue → dev; pm `done` with open issues → human-required; invalid verdict twice → human-required; turn limit; interrupted run at startup; dirty tree before a Dev turn.
 
-### Milestone 5: Pilot on palantir #58 (3–5 h)
+### Milestone 5: Sandbox runs, then pilot on palantir #58 (4–6 h)
 
-**5.1 Single turns**
+Everything in 5.1 and 5.2 runs against the sandbox with `--repo sohaibseniorswe-sys/huddle-sandbox`. Palantir is not touched until 5.3. Reset the sandbox (section 4b) between attempts as needed.
+
+**5.1 Single turns in the sandbox**
 - With `--once`, run one Dev turn, inspect the comment, PR and `Session.md`; then one PM turn, inspect the verdict comment. Fix what breaks.
 
-**5.2 Full pilot success test**
-- Run unattended until the loop reaches `human-required` or `done`. The pilot passes when this sequence happens without manual copy-pasting and without API charges:
+**5.2 Full loop in the sandbox**
+- Run unattended until the sandbox milestone reaches `done` (the human merges PRs as they arrive). Both sandbox issues must be completed, and at least one PM correction must occur. If the PM never requests a correction naturally, add an extra acceptance criterion to the open work issue mid-run to force one.
+- Acceptance: the sandbox control issue's history shows the full sequence listed in 5.3, with no manual copy-pasting and no API charges.
+
+**5.3 Pilot on palantir #58**
+- Only after 5.2 passes: run `huddle` (no `--repo`) in `~/projects/palantir` on Control #58. The pilot passes when this sequence happens without manual copy-pasting and without API charges:
   1. PM assigns a small task.
   2. Codex creates a PR.
   3. CI runs.
@@ -295,8 +417,8 @@ Estimated total: **10 to 16 hours**, most of the uncertainty in Milestone 5.
   7. Huddle records completion.
 - Acceptance: the sequence above is visible in the control issue's comment history; findings and fixes are written to `docs/PILOT.md`.
 
-**5.3 README**
-- Install, prerequisites (section 4), usage, flags, what each label means, troubleshooting for everything hit during the pilot.
+**5.4 README**
+- Install, prerequisites (section 4), sandbox setup and reset (section 4b), usage, flags, what each label means, troubleshooting for everything hit during the sandbox runs and the pilot.
 
 ---
 
