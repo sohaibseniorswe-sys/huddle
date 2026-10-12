@@ -204,20 +204,23 @@ PM:   claude -p "<prompt>" --output-format json --permission-mode acceptEdits \
 $ huddle
 ✔ git repo ~/projects/palantir, remote sohaibseniorswe-sys/palantir
 ✔ working tree clean
+✔ AGENTS.md, CLAUDE.md and Session.md present
 ✔ gh logged in, repo access ok, labels ready
-✔ codex and claude installed, no API keys in env
+✔ codex and claude installed with subscription logins, no API keys in env
 ✔ control issue #58 "Palantir V3 Control", milestone "V3", state: dev-ready
 Continue? [Y/n]
 ```
 
-1. Current directory is inside a git repo, and its `origin` remote is the target repo: `sohaibseniorswe-sys/palantir`, or the `--repo` value if given (accept HTTPS and SSH URL forms, with or without `.git`). When `--repo` is used, print a clear line such as `target: sohaibseniorswe-sys/huddle-sandbox (override)`.
-2. Working tree is clean (`git status --porcelain` is empty, ignoring `Session.md`).
-3. `gh auth status` succeeds; `gh repo view <target>` succeeds.
-4. Ensure all labels exist (this also proves write access).
-5. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are not set.
-6. `codex` and `claude` are on `PATH`. If either CLI offers a reliable non-billable way to show its login method, use it and require a subscription login; if not, document that in the README and rely on check 5.
-7. Exactly one open issue has the `control` label. It must have a milestone.
-8. `AGENTS.md` and `CLAUDE.md` exist; create an empty `Session.md` if missing.
+Checks run in this order. The billing guard runs first, so nothing touches git, `gh` or the agent CLIs while an API key is set.
+
+1. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are not set (even to an empty value).
+2. Current directory is inside a git repo, and its `origin` remote is the target repo: `sohaibseniorswe-sys/palantir`, or the `--repo` value if given (accept HTTPS and SSH URL forms, with or without `.git`; the host must be `github.com`, so SSH host aliases are rejected). When `--repo` is used, print a clear line such as `target: sohaibseniorswe-sys/huddle-sandbox (override)`.
+3. Working tree is clean (`git status --porcelain` is empty, ignoring `Session.md`).
+4. `AGENTS.md` and `CLAUDE.md` exist; create an empty `Session.md` if missing.
+5. `gh auth status` succeeds; `gh repo view <target>` succeeds.
+6. Ensure all labels exist (this also proves write access).
+7. `codex` and `claude` are on `PATH` and logged in with a subscription: `codex login status` must report `Logged in using ChatGPT`, and `claude auth status --json` must report `authMethod: "claude.ai"` and `apiProvider: "firstParty"` (see README.md).
+8. Exactly one open issue has the `control` label. It must have a milestone.
 9. Print the summary and ask `Continue? [Y/n]`. A `--yes` flag skips the prompt.
 
 Any failed check prints a clear reason and exits non-zero.
@@ -346,11 +349,11 @@ Estimated total: **11 to 18 hours**, most of the uncertainty in Milestone 5.
 - Acceptance: `go build ./...` and `go test ./...` pass; `huddle --version` prints a version; `--repo` rejects values that are not `owner/name`.
 
 **1.2 Local repo checks**
-- Section 7 checks 1, 2 and 8. Remote URL parsing for HTTPS and SSH forms, compared against the target repo.
+- Section 7 checks 2, 3 and 4. Remote URL parsing for HTTPS and SSH forms, compared against the target repo.
 - Acceptance: unit tests for URL parsing (at least 6 forms), for matching against both the default and an overridden target, and for the clean-tree check ignoring `Session.md`.
 
 **1.3 GitHub checks**
-- `gh` wrapper interface plus a fake for tests. Section 7 checks 3, 4 and 7. Idempotent label creation.
+- `gh` wrapper interface plus a fake for tests. Section 7 checks 5, 6 and 8. Idempotent label creation.
 - Acceptance: tests with the fake cover zero, one and several control issues, and a control issue without a milestone.
 
 **1.4 Sandbox repo**
@@ -358,7 +361,7 @@ Estimated total: **11 to 18 hours**, most of the uncertainty in Milestone 5.
 - Acceptance: the sandbox exists with passing CI on `main`, two work issues and a control issue in milestone "Sandbox M1"; a local clone is at `~/projects/huddle-sandbox`.
 
 **1.5 Billing guard and confirmation**
-- Section 7 checks 5, 6 and 9. Investigate each CLI's `--help` for a login-status command and report findings.
+- Section 7 checks 1, 7 and 9. Investigate each CLI's `--help` for a login-status command and report findings.
 - Acceptance: Huddle refuses to start when either API key variable is set (tested). Running `huddle --repo sohaibseniorswe-sys/huddle-sandbox` in the sandbox clone prints the startup summary and asks to continue.
 
 ### Milestone 2: Agent runner (2–3 h)
