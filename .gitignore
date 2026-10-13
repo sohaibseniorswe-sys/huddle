@@ -1,0 +1,3 @@
+# Personal Claude Code settings; must stay untracked or Claude Code treats
+# its allow rules as repository-supplied and holds them until trust.
+.claude/settings.local.json
