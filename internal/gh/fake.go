@@ -19,6 +19,14 @@ type Fake struct {
 	IssueComments map[int][]Comment // comments per issue number, oldest first
 	Created       []string          // names of labels created, in order
 	Edits         int               // number of EditLabels calls that changed something
+
+	// The facts the run screen reads (see FetchFacts).
+	FactsErr      error // returned by the four facts operations
+	Milestone     []IssueState
+	PullRequests  []PullRequest // open pull requests
+	Merged        *PullRequest  // the last merged pull request; nil if none
+	MainRun       *Run          // the latest run on any branch; nil if none
+	FactsRequests int           // number of MilestoneIssues calls, i.e. fetches
 }
 
 var _ Client = (*Fake)(nil)
@@ -113,4 +121,27 @@ func (f *Fake) PostComment(_ context.Context, _ string, number int, body string)
 	}
 	f.IssueComments[number] = append(f.IssueComments[number], Comment{Author: "huddle", Body: body})
 	return nil
+}
+
+func (f *Fake) MilestoneIssues(context.Context, string, string) ([]IssueState, error) {
+	f.FactsRequests++
+	return slices.Clone(f.Milestone), f.FactsErr
+}
+
+func (f *Fake) OpenPullRequests(context.Context, string) ([]PullRequest, error) {
+	return slices.Clone(f.PullRequests), f.FactsErr
+}
+
+func (f *Fake) LastMergedPullRequest(context.Context, string) (PullRequest, bool, error) {
+	if f.FactsErr != nil || f.Merged == nil {
+		return PullRequest{}, false, f.FactsErr
+	}
+	return *f.Merged, true, nil
+}
+
+func (f *Fake) LatestRun(context.Context, string, string) (Run, bool, error) {
+	if f.FactsErr != nil || f.MainRun == nil {
+		return Run{}, false, f.FactsErr
+	}
+	return *f.MainRun, true, nil
 }

@@ -1,5 +1,8 @@
 // Command huddle runs a Dev agent (Codex) and a PM agent (Claude Code) in
-// turns through a GitHub milestone. See MVP_PLAN.md.
+// turns through a GitHub milestone. See MVP_PLAN.md and docs/v3.
+//
+// After the startup checks it shows the run screen (package app), or with
+// --plain prints the loop's lines to stdout as Huddle v1 did.
 package main
 
 import (
@@ -14,11 +17,14 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
+	"github.com/sohaibseniorswe-sys/huddle/internal/app"
 	"github.com/sohaibseniorswe-sys/huddle/internal/checks"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gitx"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
+	"github.com/sohaibseniorswe-sys/huddle/internal/runner"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
 )
 
@@ -34,10 +40,12 @@ type deps struct {
 	lookupEnv func(string) (string, bool)
 	gh        gh.Client
 	agents    checks.AgentCLIs
-	// runAgents runs the agents for the watch loop in repo root dir; nil
-	// means the real CLIs.
-	runAgents func(dir, home string) loop.Agents
+	// runAgents returns the agents for the watch loop, run in repo root
+	// dir. stream receives their raw output (nil for the run screen).
+	runAgents func(dir, home string, stream io.Writer) loop.Agents
 	clock     loop.Clock
+	// runUI shows the run screen while l runs and returns l's exit code.
+	runUI func(ctx context.Context, cfg app.Config, l *loop.Loop, stderr io.Writer) int
 }
 
 func main() {
@@ -51,10 +59,11 @@ func main() {
 		lookupEnv: os.LookupEnv,
 		gh:        gh.CLI{},
 		agents:    checks.AgentCLIs{LookPath: exec.LookPath, Run: checks.ExecRun},
-		runAgents: func(dir, home string) loop.Agents {
-			return loop.CLIAgents{Dir: dir, Home: home, Stream: os.Stdout}
+		runAgents: func(dir, home string, stream io.Writer) loop.Agents {
+			return loop.CLIAgents{Dir: dir, Home: home, Stream: stream}
 		},
 		clock: loop.RealClock{},
+		runUI: app.Run,
 	}))
 }
 
@@ -62,6 +71,7 @@ type options struct {
 	version bool
 	yes     bool
 	once    bool
+	plain   bool
 	repo    string
 }
 
@@ -71,7 +81,8 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fs.SetOutput(stderr)
 	fs.BoolVar(&o.version, "version", false, "print the version and exit")
 	fs.BoolVar(&o.yes, "yes", false, "skip the confirmation prompt")
-	fs.BoolVar(&o.once, "once", false, "run a single turn, then exit")
+	fs.BoolVar(&o.once, "once", false, "run a single turn, then stop (with --plain: exit)")
+	fs.BoolVar(&o.plain, "plain", false, "print plain lines to stdout instead of the full-screen UI (as v1 did)")
 	fs.StringVar(&o.repo, "repo", checks.DefaultRepo, "target repo as owner/name (for testing against the sandbox)")
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: huddle [flags]\n\nRun from inside a local clone of the target repo.\n\nFlags:\n")
@@ -193,13 +204,29 @@ func run(ctx context.Context, args []string, d deps) int {
 	l := &loop.Loop{
 		Control:   gh.Control{Client: d.gh, Repo: target, Number: control.Number},
 		Milestone: control.Milestone,
-		Agents:    d.runAgents(root, home),
 		Sessions:  session.New(home, target, control.Number),
 		Clock:     d.clock,
-		Out:       d.stdout,
 		Once:      opts.once,
 	}
-	return l.Run(ctx)
+
+	// --plain: the agents' raw output and Huddle's lines go to stdout.
+	if opts.plain {
+		l.Agents = d.runAgents(root, home, d.stdout)
+		l.Report = loop.PlainReporter{Out: d.stdout}
+		l.Controls = &loop.Controls{}
+		return l.Run(ctx)
+	}
+
+	// The run screen: nothing may write to the terminal but the screen.
+	l.Agents = d.runAgents(root, home, nil)
+	return d.runUI(ctx, app.Config{
+		Repo:      target,
+		Milestone: control.Milestone,
+		Control:   l.Control,
+		LogDir:    runner.LogDir(home),
+		RepoDir:   root,
+		Now:       time.Now,
+	}, l, d.stderr)
 }
 
 // tildePath shortens a path under $HOME to start with "~".

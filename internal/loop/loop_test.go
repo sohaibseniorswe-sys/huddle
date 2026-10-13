@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sohaibseniorswe-sys/huddle/internal/activity"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
 )
@@ -63,7 +64,7 @@ type fakeAgents struct {
 	calls []call
 }
 
-func (a *fakeAgents) Run(ctx context.Context, role session.Role, sessionID, prompt string, _ int) (Result, error) {
+func (a *fakeAgents) Run(ctx context.Context, role session.Role, sessionID, prompt string, _ int, _ func(activity.Event)) (Result, error) {
 	c := call{role, sessionID, prompt}
 	a.calls = append(a.calls, c)
 	if len(a.calls) > len(a.steps) {
@@ -105,9 +106,29 @@ func newEnv(t *testing.T, labels ...string) *env {
 		Agents:    e.agents,
 		Sessions:  e.sessions,
 		Clock:     e.clock,
-		Out:       e.out,
+		Report:    &recorder{plain: PlainReporter{Out: e.out}},
+		Controls:  &Controls{},
 	}
 	return e
+}
+
+// recorder is a Reporter that prints like --plain and also keeps every
+// status it is sent.
+type recorder struct {
+	plain    PlainReporter
+	statuses []Status
+}
+
+func (r *recorder) Event(ev activity.Event) { r.plain.Event(ev) }
+func (r *recorder) Status(s Status)         { r.statuses = append(r.statuses, s) }
+
+// phases returns the phases reported so far.
+func (e *env) phases() []Phase {
+	var out []Phase
+	for _, s := range e.loop.Report.(*recorder).statuses {
+		out = append(out, s.Phase)
+	}
+	return out
 }
 
 func (e *env) run() int {
@@ -663,4 +684,104 @@ func TestFence(t *testing.T) {
 	if got := fence("a ``` b"); !strings.HasPrefix(got, "````\n") {
 		t.Errorf("fence() = %q", got)
 	}
+}
+
+func TestPauseLetsTheTurnFinishAndResumeStartsTheNext(t *testing.T) {
+	e := newEnv(t, gh.StateDevReady)
+	e.agents.steps = []func(context.Context, call) Result{
+		func(ctx context.Context, _ call) Result {
+			e.loop.Controls.Pause() // /pause while the Dev works
+			if ctx.Err() != nil {
+				t.Error("/pause canceled the running agent")
+			}
+			e.agentSets(gh.StatePMReady)
+			return Result{SessionID: "dev-1"}
+		},
+		e.sets(gh.StateDone, "pm-1"),
+	}
+	e.clock.onSleep = func(n int) {
+		if len(e.agents.calls) != 1 {
+			t.Errorf("sleep %d: %d agent runs while paused, want 1", n, len(e.agents.calls))
+		}
+		if n == 3 {
+			e.loop.Controls.Resume()
+		}
+	}
+	if code := e.run(); code != ExitOK {
+		t.Fatalf("exit %d", code)
+	}
+	if len(e.agents.calls) != 2 || e.agents.calls[1].role != session.PM {
+		t.Errorf("calls = %+v, want the PM to run after /resume", e.agents.calls)
+	}
+	if len(e.clock.sleeps) != 3 {
+		t.Errorf("sleeps = %v, want 3 polls while paused", e.clock.sleeps)
+	}
+	out := e.out.String()
+	if strings.Count(out, "Paused. The PM (Claude Code) is next") != 1 || !strings.Contains(out, "Resumed") {
+		t.Errorf("pause and resume not reported once each:\n%s", out)
+	}
+	want := []Phase{PhaseWorking, PhasePaused, PhaseWorking, PhaseDone}
+	if got := e.phases(); !slices.Equal(got, want) {
+		t.Errorf("phases = %v, want %v", got, want)
+	}
+}
+
+func TestStatusReportsUsageWait(t *testing.T) {
+	e := newEnv(t, gh.StateDevReady)
+	e.loop.Once = true
+	limited := "ERROR: You’ve hit your usage limit. Try again at 3:45 PM.\n"
+	e.agents.steps = []func(context.Context, call) Result{
+		func(context.Context, call) Result { return Result{ExitCode: 1, SessionID: "d", Output: limited} },
+		e.sets(gh.StatePMReady, "d"),
+	}
+	if code := e.run(); code != ExitOK {
+		t.Fatalf("exit %d", code)
+	}
+	statuses := e.loop.Report.(*recorder).statuses
+	if len(statuses) != 3 || statuses[1].Phase != PhaseUsageWait || statuses[1].Role != session.Dev {
+		t.Fatalf("statuses = %+v, want working, usage wait, working", statuses)
+	}
+	if got := statuses[1].Until.Format("15:04"); got != "15:46" {
+		t.Errorf("usage wait until %s, want 15:46 (reset plus a minute)", got)
+	}
+	if statuses[0].Turn != 1 {
+		t.Errorf("turn = %d, want 1", statuses[0].Turn)
+	}
+}
+
+func TestControlsWake(t *testing.T) {
+	c := &Controls{}
+
+	// A wake during a nap ends it.
+	ctx, cancel := c.napContext(context.Background())
+	if ctx.Err() != nil {
+		t.Fatal("nap ended before any wake")
+	}
+	c.Wake()
+	if ctx.Err() == nil {
+		t.Error("Wake did not end the nap")
+	}
+	cancel()
+
+	// A wake between naps is kept for the next nap, then used up.
+	c.Wake()
+	ctx, cancel = c.napContext(context.Background())
+	if ctx.Err() == nil {
+		t.Error("a wake between naps was lost")
+	}
+	cancel()
+	ctx, cancel = c.napContext(context.Background())
+	if ctx.Err() != nil {
+		t.Error("one wake ended two naps")
+	}
+	cancel()
+
+	// Resume wakes too, and clears the pause.
+	c.Pause()
+	ctx, cancel = c.napContext(context.Background())
+	c.Resume()
+	if ctx.Err() == nil || c.Paused() {
+		t.Error("Resume did not wake the loop or did not clear the pause")
+	}
+	cancel()
 }

@@ -2,7 +2,7 @@
 
 Huddle lets two AI coding agents complete a GitHub milestone from design to delivery in one go: Codex CLI as the Dev agent, Claude Code as the PM agent. The agents talk through a control issue: they post their own comments on it and set its `state:*` label at the end of each turn. Huddle watches the label and starts whichever agent's turn it is; it adds no limits, timeouts or restrictions. The human is involved only if the PM sets `state:human-required`, or Huddle does for an account or credit error. The spec is [MVP_PLAN.md](MVP_PLAN.md).
 
-**Status:** Milestone 4 is done: the watch loop is wired to the startup checks, and `huddle` runs the agents in turns until `state:done`. Next is Milestone 5: single turns and the full loop in the sandbox, then the pilot on palantir. The full README (install, troubleshooting) comes in Milestone 5.4.
+**Status:** Huddle v3 is in progress ([docs/v3](docs/v3/README.md)). v3.1 is done: after the startup checks, `huddle` shows a full-screen run screen (below). `huddle --plain` behaves like v1.
 
 ## Build and run
 
@@ -18,8 +18,35 @@ cd ~/projects/huddle-sandbox && huddle --repo sohaibseniorswe-sys/huddle-sandbox
 |------|---------|
 | `--repo owner/name` | Target repo. Default `sohaibseniorswe-sys/palantir`. Use the sandbox for testing. |
 | `--yes` | Skip the `Continue? [Y/n]` prompt. |
-| `--once` | Run a single agent turn (including its resume fallback, usage-limit wait or escalation, and anti-stall), then exit. Used for the first sandbox runs. |
+| `--once` | Run a single agent turn (including its resume fallback, usage-limit wait or escalation, and anti-stall), then stop the loop. With `--plain` Huddle then exits; on the run screen it stays open until you quit. |
+| `--plain` | No run screen: print Huddle's lines and the agents' raw output to stdout, exactly as v1 did. For tests, CI and piping into a file. |
 | `--version` | Print the version. |
+
+## The run screen
+
+After the startup checks, Huddle takes over the terminal with a fixed layout (`internal/app`), from top to bottom:
+
+- **Status bar and info line:** repo, milestone and control issue; a badge saying what is happening (`Dev (Codex) working`, `PM (Claude) working`, `Waiting for you`, `Paused · PM next`, `Waiting for usage reset · 03:45`, `Done`); issues closed, open PRs, CI on `main`, usage per agent and elapsed time. The GitHub facts are refreshed every minute and after every turn.
+- **Activity:** one line per step, newest at the bottom. Huddle's own steps, plus events read from the agents' output while they run: each Codex message's first sentence, each shell command as `$ <command>   ok` (or its exit code), and the first sentence of Claude Code's result.
+- **Text field** and a **help line** with the keys that work right now.
+
+The terminal must be at least 80 × 24.
+
+**Slash commands.** Type `/` to open the command menu; typing filters it, ↑/↓ choose, Tab completes, Enter runs, Esc closes. Only commands that make sense right now are shown.
+
+| Command | Does |
+|---|---|
+| `/status` | Facts in the Activity pane: turn, issues, open PRs and their CI, `main`, usage, elapsed. Starts no agent. |
+| `/log` | The agents' raw logs for this repo, at the end of the newest run. `[` `]` older/newer run, `g` `G` start/end, PgUp/PgDn scroll. |
+| `/pause` | The running turn finishes normally; no new turn starts. |
+| `/resume` | Start the next turn now. |
+| `/reply <text>` | Only while the control issue says `state:human-required`: posts `<text>` as your comment on the control issue and sets `state:pm-ready`. Temporary until the companion (v3.2). |
+| `/companion` | Placeholder; the companion arrives in v3.2. |
+| `/quit` | Same as Ctrl+C: stops the running agent, puts its ready label back, exits. |
+
+Plain text (without `/`) is never posted anywhere; until v3.2 Huddle only says the companion is coming.
+
+**Focus.** Keys go only to the focused element: the text field (default), the menu, or the Activity pane (purple border, "◆ focused"). Tab switches between the text field and Activity. In Activity, ↑/↓ select a line, Enter opens the raw log at that line, Esc goes back. The mouse works too: the wheel scrolls the pane under the pointer and a click focuses Activity or selects a line. While Huddle has the mouse, the terminal's own text selection needs Shift + drag in most terminals.
 
 ## Startup checks
 
@@ -38,7 +65,7 @@ There is no clean-tree check: after an interrupted run the tree is normally dirt
 
 ## The watch loop
 
-Once the checks pass, Huddle watches the control issue (`internal/loop`). It reads the issue's `state:*` label every 30 seconds while no agent is running, and straight after each agent exits. Only one agent runs at a time. Huddle never stops on its own: it exits on `state:done` (status 0), on Ctrl+C (status 130), or after one turn with `--once`.
+Once the checks pass, Huddle watches the control issue (`internal/loop`). It reads the issue's `state:*` label every 30 seconds while no agent is running (at once after `/resume` or `/reply`), and straight after each agent exits. Only one agent runs at a time. Huddle never stops on its own: the loop ends on `state:done` (status 0), on Ctrl+C or `/quit` (status 130), or after one turn with `--once`. On the run screen, Huddle then stays open until you quit; with `--plain` it exits.
 
 To start a run, add `state:dev-ready` to the control issue (or `state:pm-ready` to have the PM write the first Dev prompt).
 
@@ -60,7 +87,7 @@ Agents set labels with `gh issue edit --add-label` and may leave the old one in 
 ### A turn
 
 1. Huddle sets `state:dev-working` or `state:pm-working`.
-2. It sends the launch prompt (the operating principles, below) on stdin and runs the agent, resuming its saved session if there is one. Output is streamed to the terminal and saved to `~/.huddle/logs/<timestamp>-turn<N>-<role>.log`. There is no timeout.
+2. It sends the launch prompt (the operating principles, below) on stdin and runs the agent, resuming its saved session if there is one. Output is saved to `~/.huddle/logs/<timestamp>-turn<N>-<role>.log`, each line starting with the time it arrived (`22:52:07  `), and turned into Activity events while the agent runs; with `--plain` it is also streamed to the terminal. There is no timeout.
 3. When the agent exits, Huddle saves its session id and reads the label again. If the agent set a new label, that decides what happens next.
 4. If the label is unchanged, Huddle checks the output for usage-limit messages first (below), then applies the resume fallback, then anti-stall.
 
@@ -76,7 +103,7 @@ Huddle keeps one session id per agent per control issue in `~/.huddle/sessions/<
 
 ### Ctrl+C
 
-Ctrl+C reaches only Huddle (each agent runs in its own process group). If an agent is running, Huddle kills its whole process group, saves its session id, puts back that agent's ready label so the next `huddle` resumes it, and exits 130. The same applies while Huddle is waiting out a usage limit. While no agent is running, Huddle just exits 130. If Huddle is killed outright (no Ctrl+C), the `*-working` label stays, and the next `huddle` treats it as that agent's ready label.
+Ctrl+C (or `/quit` on the run screen) reaches only Huddle (each agent runs in its own process group). If an agent is running, Huddle kills its whole process group, saves its session id, puts back that agent's ready label so the next `huddle` resumes it, and exits 130. The same applies while Huddle is waiting out a usage limit. While no agent is running, Huddle just exits 130. If Huddle is killed outright (no Ctrl+C), the `*-working` label stays, and the next `huddle` treats it as that agent's ready label.
 
 ## Decisions
 
@@ -102,7 +129,7 @@ Notes:
 
 ## Agent runner
 
-`internal/runner` runs one agent at a time: in the repo root, with no time limit, with output streamed to the terminal and saved to `~/.huddle/logs/<timestamp>-turn<N>-<role>.log`, and with the first 30 and last 50 lines kept (`Result.Head`, `Result.Tail`). Each agent runs in its own process group, and the whole group gets `SIGKILL` when the run ends: on Ctrl+C, and after a normal exit too, so nothing the agent started in the background outlives its turn. If a leftover process still holds the output pipes, the run waits up to 5 s for them before closing them. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are removed from the child environment even though startup already refuses to run with them set. A non-zero exit or a cancel is reported in the result, not returned as an error. `Spec.Timeout` still exists for tests; zero (the default, and all Huddle uses) means no timeout.
+`internal/runner` runs one agent at a time: in the repo root, with no time limit, with output saved to `~/.huddle/logs/<timestamp>-turn<N>-<role>.log` (each line time-stamped, and passed to `Spec.OnLine` for the Activity pane) and streamed to the terminal only with `--plain`, and with the first 30 and last 50 lines kept (`Result.Head`, `Result.Tail`). Each agent runs in its own process group, and the whole group gets `SIGKILL` when the run ends: on Ctrl+C, and after a normal exit too, so nothing the agent started in the background outlives its turn. If a leftover process still holds the output pipes, the run waits up to 5 s for them before closing them. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are removed from the child environment even though startup already refuses to run with them set. A non-zero exit or a cancel is reported in the result, not returned as an error. `Spec.Timeout` still exists for tests; zero (the default, and all Huddle uses) means no timeout.
 
 ## Agent commands
 

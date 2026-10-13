@@ -10,7 +10,7 @@ import (
 )
 
 // ControlLabel marks the control issue.
-const ControlLabel = "control"
+const ControlLabel = gh.ControlLabel
 
 // StatePrefix is the prefix shared by all state labels.
 const StatePrefix = gh.StatePrefix

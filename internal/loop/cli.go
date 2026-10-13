@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sohaibseniorswe-sys/huddle/internal/activity"
 	"github.com/sohaibseniorswe-sys/huddle/internal/runner"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
 )
@@ -27,15 +28,16 @@ func (RealClock) Sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// CLIAgents runs the real agent CLIs (section 6) in the repo root, streaming
-// their output to Stream and logging it under Home/.huddle/logs.
+// CLIAgents runs the real agent CLIs (section 6) in the repo root, logging
+// their output under Home/.huddle/logs. While an agent runs, its output is
+// turned into Activity events (see package activity).
 type CLIAgents struct {
 	Dir    string    // repo root
 	Home   string    // home directory, for ~/.huddle/logs
-	Stream io.Writer // live output, normally os.Stdout
+	Stream io.Writer // live raw output: os.Stdout with --plain, nil for the run screen
 }
 
-func (a CLIAgents) Run(ctx context.Context, role session.Role, sessionID, prompt string, turn int) (Result, error) {
+func (a CLIAgents) Run(ctx context.Context, role session.Role, sessionID, prompt string, turn int, events func(activity.Event)) (Result, error) {
 	logPath := runner.LogPath(a.Home, time.Now(), turn, string(role))
 	lastMessage := strings.TrimSuffix(logPath, ".log") + ".last"
 	var spec runner.Spec
@@ -47,6 +49,19 @@ func (a CLIAgents) Run(ctx context.Context, role session.Role, sessionID, prompt
 	spec.LogPath = logPath
 	spec.Stream = a.Stream
 
+	// The parser reads every line the runner writes to the log, while the
+	// agent runs, and reports the events it finds. Flush reports what is
+	// still open when the run ends.
+	if role == session.PM {
+		p := activity.NewClaude(logPath, events)
+		spec.OnLine = p.Line
+		defer p.Flush()
+	} else {
+		p := activity.NewCodex(logPath, events)
+		spec.OnLine = p.Line
+		defer p.Flush()
+	}
+
 	res, err := runner.Run(ctx, spec)
 	if err != nil {
 		return Result{}, err
@@ -54,10 +69,11 @@ func (a CLIAgents) Run(ctx context.Context, role session.Role, sessionID, prompt
 	out := Result{ExitCode: res.ExitCode, Canceled: res.Canceled}
 
 	// The full log is the most complete output; fall back to what the
-	// runner kept in memory if it cannot be read.
+	// runner kept in memory if it cannot be read. The log's time stamps are
+	// removed so the usage-limit checks see the raw lines.
 	full := res.Head + "\n" + res.Tail
 	if data, err := os.ReadFile(logPath); err == nil {
-		full = string(data)
+		full = runner.StripStamps(string(data))
 	}
 	if role == session.PM {
 		if env, err := runner.ParseClaude(res.Stdout); err == nil {

@@ -1,0 +1,214 @@
+package app
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+
+	"github.com/sohaibseniorswe-sys/huddle/internal/activity"
+	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
+	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
+	"github.com/sohaibseniorswe-sys/huddle/internal/session"
+)
+
+func TestMain(m *testing.M) {
+	// Without colours, a rendered screen is plain text that a golden file
+	// can hold and a person can read.
+	lipgloss.SetColorProfile(termenv.Ascii)
+	os.Exit(m.Run())
+}
+
+const (
+	testRepo    = "sohaibseniorswe-sys/palantir"
+	testRepoDir = "/home/u/projects/palantir"
+	testWidth   = 100
+	testHeight  = 34
+)
+
+// fixture is a run screen in a known state, with fakes behind it.
+type fixture struct {
+	t       *testing.T
+	m       Model
+	now     time.Time // what the model's clock returns
+	gh      *gh.Fake
+	stopped bool   // cfg.Stop was called
+	logPath string // the fake raw log of turn 5
+	log     string // its content
+}
+
+// at returns 2026-10-13 at hh:mm UTC.
+func at(hh, mm int) time.Time { return time.Date(2026, 10, 13, hh, mm, 0, 0, time.UTC) }
+
+// rawLog is a Dev run's log as runner.Run writes it: every line stamped.
+const rawLog = `20:40:00  # huddle: codex exec --strict-config - < (prompt, 1926 bytes) in /home/u/projects/palantir at 2026-10-13T20:40:00Z
+22:51:58  exec
+22:51:58  /bin/bash -lc "go vet ./... && go test ./..." in /home/u/projects/palantir
+22:52:01   succeeded in 2804ms:
+22:52:01  ok      github.com/sohaibseniorswe-sys/palantir/internal/export  0.011s
+22:52:07  exec
+22:52:07  /bin/bash -lc "git push -u origin agent/issue-62 && gh pr create --title 'Add /export'
+22:52:07    --body 'Closes #62'" in /home/u/projects/palantir
+22:52:11   succeeded in 4231ms:
+22:52:11   * [new branch]      agent/issue-62 -> agent/issue-62
+22:52:11  https://github.com/sohaibseniorswe-sys/palantir/pull/73
+22:52:12
+22:52:12  codex
+22:52:12  Waiting for CI on PR #73
+22:52:13
+22:52:13  exec
+22:52:13  /bin/bash -lc 'gh pr checks 73 --watch --interval 10' in /home/u/projects/palantir
+22:52:23  test    pending 0   https://github.com/sohaibseniorswe-sys/palantir/actions/runs/38461
+22:52:43  test    pass    31s https://github.com/sohaibseniorswe-sys/palantir/actions/runs/38461
+`
+
+// newFixture returns the run screen of screen 01 in docs/v3/screens: the
+// Dev is working on Milestone 3 and twelve events have arrived.
+func newFixture(t *testing.T) *fixture {
+	t.Helper()
+	f := &fixture{t: t, now: at(20, 39)}
+	f.gh = &gh.Fake{
+		Milestone: []gh.IssueState{
+			{Number: 59, Closed: true}, {Number: 60, Closed: true}, {Number: 61, Closed: true},
+			{Number: 62}, {Number: 63, Closed: true}, {Number: 64}, {Number: 65},
+		},
+		PullRequests: []gh.PullRequest{{Number: 73, Title: "export endpoint", Checks: gh.Checks{Total: 2, Done: 1, Pending: 1}}},
+		Merged:       &gh.PullRequest{Number: 71, MergedAt: at(22, 41)},
+		MainRun:      &gh.Run{Status: "completed", Conclusion: "success"},
+		Issues:       []gh.Issue{{Number: 58, Labels: []string{"control", gh.StateDevWorking}}},
+	}
+
+	logDir := t.TempDir()
+	f.log = rawLog
+	f.logPath = filepath.Join(logDir, "20261013-204000-turn5-dev.log")
+	if err := os.WriteFile(f.logPath, []byte(f.log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A log of another repo, which /log must leave out.
+	other := "20:00:00  # huddle: codex exec - in /home/u/projects/other at 2026-10-13T20:00:00Z\n"
+	if err := os.WriteFile(filepath.Join(logDir, "20261013-200000-turn1-dev.log"), []byte(other), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	f.m = New(Config{
+		Repo:      testRepo,
+		Milestone: "Milestone 3",
+		Control:   gh.Control{Client: f.gh, Repo: testRepo, Number: 58},
+		Controls:  &loop.Controls{},
+		Stop:      func() { f.stopped = true },
+		LogDir:    logDir,
+		RepoDir:   testRepoDir,
+		Now:       func() time.Time { return f.now },
+	})
+	f.send(tea.WindowSizeMsg{Width: testWidth, Height: testHeight})
+	f.send(StatusMsg{Phase: loop.PhaseWorking, Role: session.Dev, Turn: 5, Since: at(22, 41)})
+	f.run(f.m.fetchFacts()) // what Init starts
+
+	ref := func(line string) activity.LogRef {
+		i := strings.Index(f.log, line)
+		if i < 0 {
+			t.Fatalf("line %q not in the log", line)
+		}
+		return activity.LogRef{Path: f.logPath, Offset: int64(i)}
+	}
+	for _, e := range []struct {
+		hh, mm int
+		actor  string
+		text   string
+		ref    activity.LogRef
+	}{
+		{20, 39, "huddle", "Started Milestone 3 · control #58", activity.LogRef{}},
+		{20, 40, "codex", "Read #58, AGENTS.md and the 7 milestone issues", activity.LogRef{}},
+		{20, 58, "codex", "Merged PR #68, closed #59", activity.LogRef{}},
+		{21, 31, "codex", "Merged PR #69, closed #60", activity.LogRef{}},
+		{22, 6, "codex", "Merged PR #70, closed #63", activity.LogRef{}},
+		{22, 41, "codex", "Merged PR #71, closed #61", activity.LogRef{}},
+		{22, 41, "codex", "Starting #62: add the /export endpoint", activity.LogRef{}},
+		{22, 43, "codex", "$ go vet ./... && go test ./...   ok", ref("22:51:58  /bin/bash")},
+		{22, 47, "codex", "Added export handler and table-driven tests", activity.LogRef{}},
+		{22, 52, "codex", "$ git push -u origin agent/issue-62 && gh pr create --title 'Add /export'   ok", ref("22:52:07  exec")},
+		{22, 52, "codex", "Waiting for CI on PR #73", ref("22:52:12  Waiting")},
+		{22, 53, "huddle", "Usage check: Codex ok, Claude Code ok", activity.LogRef{}},
+	} {
+		f.send(EventMsg{Time: at(e.hh, e.mm), Actor: e.actor, Text: e.text, LogRef: e.ref})
+	}
+	f.now = at(22, 53)
+	f.send(tickMsg(f.now)) // its command (the next tick and a fetch) is not run
+	return f
+}
+
+// send passes msg to Update and keeps the new model. It returns the
+// command Update returned.
+func (f *fixture) send(msg tea.Msg) tea.Cmd {
+	f.t.Helper()
+	next, cmd := f.m.Update(msg)
+	f.m = next.(Model)
+	return cmd
+}
+
+// run runs cmd, as Bubble Tea would in the background, and sends its
+// message. Commands made of several (tea.Batch) are run one by one. It
+// must not be given a tick's command: that one waits for its timer.
+func (f *fixture) run(cmd tea.Cmd) {
+	f.t.Helper()
+	if cmd == nil {
+		return
+	}
+	switch msg := cmd().(type) {
+	case tea.BatchMsg:
+		for _, c := range msg {
+			f.run(c)
+		}
+	case tickMsg:
+		// A timer: not run in tests.
+	default:
+		f.send(msg)
+	}
+}
+
+// keys types each key: special keys by name ("up", "enter", "tab", "esc",
+// "ctrl+c", "pgup", "left", "backspace"), anything else as text.
+func (f *fixture) keys(keys ...string) {
+	f.t.Helper()
+	special := map[string]tea.KeyType{
+		"up": tea.KeyUp, "down": tea.KeyDown, "left": tea.KeyLeft, "right": tea.KeyRight,
+		"enter": tea.KeyEnter, "tab": tea.KeyTab, "esc": tea.KeyEsc, "ctrl+c": tea.KeyCtrlC,
+		"pgup": tea.KeyPgUp, "pgdown": tea.KeyPgDown, "backspace": tea.KeyBackspace,
+	}
+	for _, k := range keys {
+		if t, ok := special[k]; ok {
+			f.run(f.send(tea.KeyMsg{Type: t}))
+			continue
+		}
+		for _, r := range k {
+			f.run(f.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}))
+		}
+	}
+}
+
+// eventTexts returns the texts of the events, newest last.
+func (f *fixture) eventTexts() []string {
+	var out []string
+	for _, e := range f.m.events {
+		out = append(out, e.Text)
+	}
+	return out
+}
+
+// lastEvent returns the newest event's text.
+func (f *fixture) lastEvent() string {
+	if len(f.m.events) == 0 {
+		return ""
+	}
+	return f.m.events[len(f.m.events)-1].Text
+}
+
+// sizeMsg is a terminal resize to width × height.
+func sizeMsg(width, height int) tea.WindowSizeMsg {
+	return tea.WindowSizeMsg{Width: width, Height: height}
+}

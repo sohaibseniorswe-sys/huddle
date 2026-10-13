@@ -1,17 +1,20 @@
 // Package loop is Huddle's watch loop (MVP_PLAN.md section 8): it reads the
 // control issue's state label and starts whichever agent's turn it is. It
 // never judges the agents' work and never stops on its own; it stops only on
-// state:done, Ctrl+C (context cancel) or, with Once, after one turn.
+// state:done, Ctrl+C or /quit (context cancel) or, with Once, after one turn.
+//
+// The loop does not print. It reports what it does to a Reporter: the run
+// screen shows the reports, and with --plain they are printed as v1 did.
 package loop
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"time"
 
+	"github.com/sohaibseniorswe-sys/huddle/internal/activity"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/prompts"
 	"github.com/sohaibseniorswe-sys/huddle/internal/runner"
@@ -45,9 +48,11 @@ type Clock interface {
 // Agents runs one agent turn.
 type Agents interface {
 	// Run runs role with prompt on stdin, resuming sessionID if it is not
-	// empty. turn numbers the log file. The error is only for a run that
-	// could not start; a non-zero exit or a cancel is reported in Result.
-	Run(ctx context.Context, role session.Role, sessionID, prompt string, turn int) (Result, error)
+	// empty. turn numbers the log file. While the agent runs, Run passes
+	// the Activity events found in its output to events. The error is only
+	// for a run that could not start; a non-zero exit or a cancel is
+	// reported in Result.
+	Run(ctx context.Context, role session.Role, sessionID, prompt string, turn int, events func(activity.Event)) (Result, error)
 }
 
 // Result is the outcome of one agent run.
@@ -79,10 +84,12 @@ type Loop struct {
 	Agents    Agents
 	Sessions  Sessions
 	Clock     Clock
-	Out       io.Writer // Huddle's own status lines
+	Report    Reporter  // told about every step and status change
+	Controls  *Controls // pause, resume and wake from the run screen; must not be nil
 	Once      bool      // run a single turn, then exit
 
-	turn int // turns started by this process, for log names
+	turn   int    // turns started by this process, for log names
+	status Status // the status last reported
 }
 
 // Markers identify the comments Huddle itself posts on the control issue.
@@ -104,8 +111,9 @@ var errInterrupted = errors.New("interrupted")
 // Run runs the loop until state:done (ExitOK), Ctrl+C (ExitInterrupted), or
 // the end of the first turn with Once (ExitOK).
 func (l *Loop) Run(ctx context.Context) int {
-	hintShown := false // "add state:dev-ready" printed for the current no-label spell
-	shownComment := "" // the human-required comment already printed
+	hintShown := false  // "add state:dev-ready" reported for the current no-label spell
+	shownComment := ""  // the human-required comment already reported
+	pauseShown := false // "Paused" reported for the current pause
 	for {
 		state, err := l.state(ctx)
 		if err != nil {
@@ -124,6 +132,21 @@ func (l *Loop) Run(ctx context.Context) int {
 			if state == gh.StatePMReady || state == gh.StatePMWorking {
 				role = session.PM
 			}
+			// /pause: start no new turn until /resume. The label is read
+			// again after every wait, in case the human changed it.
+			if l.Controls.Paused() {
+				if !pauseShown {
+					pauseShown = true
+					l.printf("Paused. The %s is next and starts when you /resume", roleName(role))
+				}
+				l.setStatus(PhasePaused, role, time.Time{})
+				break // leave the switch and wait below
+
+			}
+			if pauseShown {
+				pauseShown = false
+				l.printf("Resumed")
+			}
 			if state == gh.StateDevWorking || state == gh.StatePMWorking {
 				l.printf("%s found: a previous Huddle run was interrupted; restarting the %s", state, roleName(role))
 			}
@@ -137,8 +160,9 @@ func (l *Loop) Run(ctx context.Context) int {
 			continue // read the label again straight away
 
 		case gh.StateDone:
+			l.setStatus(PhaseDone, "", time.Time{})
 			l.printf("%s: the milestone is finished. Final report:", gh.StateDone)
-			l.printLatestComment(ctx)
+			l.reportLatestComment(ctx)
 			return ExitOK
 
 		case gh.StateHumanRequired:
@@ -147,18 +171,22 @@ func (l *Loop) Run(ctx context.Context) int {
 			} else if key := commentKey(c, ok); key != shownComment {
 				shownComment = key
 				l.printf("%s: waiting for the human. Latest comment on #%d:", gh.StateHumanRequired, l.Control.Number)
-				l.printComment(c, ok)
+				l.reportComment(c, ok)
 				l.printf("set state:dev-ready or state:pm-ready to continue")
 			}
+			// After the comment, so the run screen's hint on how to answer
+			// comes below it.
+			l.setStatus(PhaseHuman, "", time.Time{})
 
 		case "":
+			l.setStatus(PhaseNoLabel, "", time.Time{})
 			if !hintShown {
 				hintShown = true
 				l.printf("control issue #%d has no state:* label; add %s to start", l.Control.Number, gh.StateDevReady)
 			}
 		}
 
-		if l.Clock.Sleep(ctx, PollInterval) != nil {
+		if l.nap(ctx, PollInterval) != nil {
 			return l.interrupted()
 		}
 	}
@@ -169,11 +197,38 @@ func (l *Loop) interrupted() int {
 	return ExitInterrupted
 }
 
+// nap waits d between two reads of the label. Unlike a plain sleep it ends
+// early when the run screen calls Controls.Wake or Controls.Resume. It
+// returns errInterrupted on Ctrl+C.
+func (l *Loop) nap(ctx context.Context, d time.Duration) error {
+	napCtx, cancel := l.Controls.napContext(ctx)
+	defer cancel()
+	err := l.Clock.Sleep(napCtx, d)
+	// Sleep fails when napCtx ends early. A wake is fine: read the label
+	// now. Anything else (Ctrl+C) stops the loop.
+	woken := ctx.Err() == nil && napCtx.Err() != nil
+	if err != nil && !woken {
+		return errInterrupted
+	}
+	return nil
+}
+
+// setStatus reports a new status if it differs from the last one.
+func (l *Loop) setStatus(phase Phase, role session.Role, until time.Time) {
+	s := Status{Phase: phase, Role: role, Turn: l.turn, Since: l.Clock.Now(), Until: until}
+	if s.same(l.status) {
+		return
+	}
+	l.status = s
+	l.Report.Status(s)
+}
+
 // turnFor runs one turn for role (section 8.2), including the resume
 // fallback (8.4), usage-limit waits and escalation (8.6) and anti-stall
 // (8.3). It returns errInterrupted on Ctrl+C.
 func (l *Loop) turnFor(ctx context.Context, role session.Role) error {
 	l.turn++
+	l.setStatus(PhaseWorking, role, time.Time{})
 	working, ready := workingLabel(role), readyLabel(role)
 	if err := l.retry(ctx, "set "+working, func() error { return l.Control.SetState(ctx, working) }); err != nil {
 		return err
@@ -192,7 +247,7 @@ func (l *Loop) turnFor(ctx context.Context, role session.Role) error {
 		} else {
 			l.printf("turn %d: %s, fresh session", l.turn, roleName(role))
 		}
-		res, err := l.Agents.Run(ctx, role, sessionID, prompt, l.turn)
+		res, err := l.Agents.Run(ctx, role, sessionID, prompt, l.turn, l.Report.Event)
 		if err != nil {
 			// Could not start: treat as a failed run with that error as output.
 			l.printf("warning: %v", err)
@@ -239,12 +294,15 @@ func (l *Loop) turnFor(ctx context.Context, role session.Role) error {
 					d = until
 				}
 			}
+			until := l.Clock.Now().Add(d)
 			l.printf("%s hit a usage limit (%s); waiting %s until %s, then resuming",
-				roleName(role), usage.Message, d.Round(time.Second), l.Clock.Now().Add(d).Format("2006-01-02 15:04 MST"))
+				roleName(role), usage.Message, d.Round(time.Second), until.Format("2006-01-02 15:04 MST"))
+			l.setStatus(PhaseUsageWait, role, until)
 			if l.Clock.Sleep(ctx, d) != nil {
 				l.restore(ready)
 				return errInterrupted
 			}
+			l.setStatus(PhaseWorking, role, time.Time{})
 			sessionID = l.Sessions.Load().Get(role)
 			continue
 
@@ -329,25 +387,33 @@ func (l *Loop) restore(ready string) {
 	l.printf("restored %s", ready)
 }
 
-func (l *Loop) printLatestComment(ctx context.Context) {
+func (l *Loop) reportLatestComment(ctx context.Context) {
 	c, ok, err := l.Control.LatestComment(ctx)
 	if err != nil {
 		l.printf("warning: %v", err)
 		return
 	}
-	l.printComment(c, ok)
+	l.reportComment(c, ok)
 }
 
-func (l *Loop) printComment(c gh.Comment, ok bool) {
+// reportComment reports a whole comment from the control issue as one
+// event that keeps the comment's lines.
+func (l *Loop) reportComment(c gh.Comment, ok bool) {
 	if !ok {
-		fmt.Fprintln(l.Out, "(no comments)")
+		l.printf("(no comments)")
 		return
 	}
-	fmt.Fprintf(l.Out, "--- %s %s\n%s\n---\n", c.Author, c.URL, strings.TrimSpace(c.Body))
+	l.printf("--- %s %s\n%s\n---", c.Author, c.URL, strings.TrimSpace(c.Body))
 }
 
+// printf reports one of Huddle's own steps as an Activity event. (The name
+// is from v1, when these lines were printed; --plain still prints them.)
 func (l *Loop) printf(format string, a ...any) {
-	fmt.Fprintf(l.Out, "huddle: "+format+"\n", a...)
+	l.Report.Event(activity.Event{
+		Time:  l.Clock.Now(),
+		Actor: activity.ActorHuddle,
+		Text:  fmt.Sprintf(format, a...),
+	})
 }
 
 // commentKey identifies a comment, to print a human-required comment once.

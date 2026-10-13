@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sohaibseniorswe-sys/huddle/internal/activity"
+	"github.com/sohaibseniorswe-sys/huddle/internal/app"
 	"github.com/sohaibseniorswe-sys/huddle/internal/checks"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
@@ -29,7 +32,7 @@ func (stopClock) Sleep(context.Context, time.Duration) error { return context.Ca
 // noAgents fails the test if an agent runs.
 type noAgents struct{ t *testing.T }
 
-func (a noAgents) Run(context.Context, session.Role, string, string, int) (loop.Result, error) {
+func (a noAgents) Run(context.Context, session.Role, string, string, int, func(activity.Event)) (loop.Result, error) {
 	a.t.Error("an agent ran")
 	return loop.Result{}, nil
 }
@@ -41,7 +44,7 @@ type fakeAgent struct {
 	runs  []session.Role
 }
 
-func (a *fakeAgent) Run(_ context.Context, role session.Role, _, _ string, _ int) (loop.Result, error) {
+func (a *fakeAgent) Run(_ context.Context, role session.Role, _, _ string, _ int, _ func(activity.Event)) (loop.Result, error) {
 	a.runs = append(a.runs, role)
 	a.gh.Issues[0].Labels = append(a.gh.Issues[0].Labels, a.label)
 	return loop.Result{SessionID: "sess-" + string(role)}, nil
@@ -79,8 +82,15 @@ func testDeps(t *testing.T, dir string, env map[string]string, stdin string) (de
 				return `{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}`, "", nil
 			},
 		},
-		runAgents: func(string, string) loop.Agents { return noAgents{t} },
+		runAgents: func(string, string, io.Writer) loop.Agents { return noAgents{t} },
 		clock:     stopClock{},
+		// The tests never open the full-screen UI: this stand-in runs the
+		// loop with plain output instead.
+		runUI: func(ctx context.Context, _ app.Config, l *loop.Loop, _ io.Writer) int {
+			l.Report = loop.PlainReporter{Out: &stdout}
+			l.Controls = &loop.Controls{}
+			return l.Run(ctx)
+		},
 	}, &stdout, &stderr
 }
 
@@ -215,7 +225,7 @@ func TestStartupYesOnceRunsOneTurn(t *testing.T) {
 	fake.Issues[0].Labels = append(fake.Issues[0].Labels, gh.StateDevReady)
 	agent := &fakeAgent{gh: fake, label: gh.StatePMReady}
 	var gotDir, gotHome string
-	d.runAgents = func(dir, home string) loop.Agents { gotDir, gotHome = dir, home; return agent }
+	d.runAgents = func(dir, home string, _ io.Writer) loop.Agents { gotDir, gotHome = dir, home; return agent }
 	if code := run(context.Background(), []string{"--repo", sandbox, "--yes", "--once"}, d); code != 0 {
 		t.Fatalf("exit %d, stderr: %s", code, stderr.String())
 	}
@@ -281,5 +291,49 @@ func TestTildePath(t *testing.T) {
 	}
 	if got := tildePath("/srv/palantir", env); got != "/srv/palantir" {
 		t.Errorf("tildePath() = %q", got)
+	}
+}
+
+func TestRunScreenOrPlain(t *testing.T) {
+	for _, tt := range []struct {
+		args       []string
+		wantScreen bool
+	}{
+		{[]string{"--repo", sandbox, "--yes"}, true},
+		{[]string{"--repo", sandbox, "--yes", "--plain"}, false},
+	} {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			dir := gitRepo(t, "https://github.com/"+sandbox)
+			d, stdout, _ := testDeps(t, dir, nil, "")
+			var stream io.Writer = &bytes.Buffer{} // anything but nil
+			d.runAgents = func(_, _ string, s io.Writer) loop.Agents { stream = s; return noAgents{t} }
+			var cfg app.Config
+			screen := false
+			d.runUI = func(_ context.Context, c app.Config, _ *loop.Loop, _ io.Writer) int {
+				screen, cfg = true, c
+				return 0
+			}
+			run(context.Background(), tt.args, d)
+			if screen != tt.wantScreen {
+				t.Fatalf("run screen shown = %t, want %t", screen, tt.wantScreen)
+			}
+			if !tt.wantScreen {
+				if stream != d.stdout {
+					t.Error("--plain: the agents' raw output does not go to stdout")
+				}
+				if !strings.Contains(stdout.String(), "huddle: control issue #3 has no state:* label") {
+					t.Errorf("--plain output misses the loop's lines:\n%s", stdout)
+				}
+				return
+			}
+			if stream != nil {
+				t.Error("run screen: the agents' raw output must not reach the terminal")
+			}
+			home, _ := d.lookupEnv("HOME")
+			if cfg.Repo != sandbox || cfg.Milestone != "Sandbox M1" || cfg.Control.Number != 3 ||
+				cfg.LogDir != filepath.Join(home, ".huddle", "logs") || cfg.Now == nil {
+				t.Errorf("run screen config = %+v", cfg)
+			}
+		})
 	}
 }

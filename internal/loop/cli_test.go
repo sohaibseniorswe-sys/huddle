@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/sohaibseniorswe-sys/huddle/internal/activity"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
 )
 
@@ -32,13 +33,15 @@ done
 cat > /dev/null
 printf 'OpenAI Codex v0.160.0\n--------\nsession id: 01a1-dev\n--------\n' >&2
 echo "ERROR: You’ve hit your usage limit. Try again later." >&2
+printf 'codex\nClosed #1. All tests pass.\n\ntokens used\n100\n' >&2
 printf 'Done: closed #1' > "$last"
 echo 'Done: closed #1'
 exit 1
 `})
 	home := t.TempDir()
+	var events []activity.Event
 	a := CLIAgents{Dir: t.TempDir(), Home: home}
-	res, err := a.Run(context.Background(), session.Dev, "", "prompt", 7)
+	res, err := a.Run(context.Background(), session.Dev, "", "prompt", 7, func(e activity.Event) { events = append(events, e) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,9 +51,16 @@ exit 1
 	if !strings.Contains(res.Output, "You’ve hit your usage limit") {
 		t.Errorf("Output misses the limit message:\n%s", res.Output)
 	}
+	l := &Loop{Clock: RealClock{}}
+	if u := l.usageLimit(session.Dev, res.Output); !u.Hit {
+		t.Errorf("usage limit not found in the time-stamped log: %+v", u)
+	}
 	logs, _ := filepath.Glob(filepath.Join(home, ".huddle", "logs", "*-turn7-dev.log"))
 	if len(logs) != 1 {
-		t.Errorf("logs = %v, want one turn7-dev log", logs)
+		t.Fatalf("logs = %v, want one turn7-dev log", logs)
+	}
+	if len(events) != 1 || events[0].Text != "Closed #1" || events[0].Actor != activity.ActorCodex || events[0].LogRef.Path != logs[0] {
+		t.Errorf("events = %+v, want one codex event pointing into %s", events, logs[0])
 	}
 }
 
@@ -61,7 +71,7 @@ echo "$@" >&2
 echo '{"type":"result","subtype":"success","is_error":true,"session_id":"pm-42","result":"You'"'"'ve hit your session limit · resets 3pm (Europe/London)"}'
 `})
 	a := CLIAgents{Dir: t.TempDir(), Home: t.TempDir()}
-	res, err := a.Run(context.Background(), session.PM, "pm-41", "prompt", 1)
+	res, err := a.Run(context.Background(), session.PM, "pm-41", "prompt", 1, func(activity.Event) {})
 	if err != nil {
 		t.Fatal(err)
 	}

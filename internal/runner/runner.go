@@ -38,8 +38,9 @@ type Spec struct {
 	Stdin   string        // passed on stdin; empty means no stdin
 	Dir     string        // working directory
 	Timeout time.Duration // 0 means no timeout; Huddle never sets one
-	LogPath string        // full output is written here; empty means no log file
-	Stream  io.Writer     // live output, normally os.Stdout; nil means none
+	LogPath string        // full output is written here, each line time-stamped; empty means no log file
+	OnLine  func(Line)    // called with every line written to the log file; nil means none
+	Stream  io.Writer     // live output, os.Stdout with --plain; nil means none
 	Tail    int           // lines kept in Result.Tail; 0 means DefaultTailLines
 	Env     []string      // base environment; nil means os.Environ()
 }
@@ -68,7 +69,7 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 		env = os.Environ()
 	}
 
-	var logFile *os.File
+	var log *logWriter
 	if spec.LogPath != "" {
 		if err := os.MkdirAll(filepath.Dir(spec.LogPath), 0o755); err != nil {
 			return Result{}, fmt.Errorf("create log dir: %w", err)
@@ -78,8 +79,8 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 			return Result{}, fmt.Errorf("create log: %w", err)
 		}
 		defer f.Close()
-		logFile = f
-		fmt.Fprintf(f, "# huddle: %s in %s at %s\n", commandLine(spec), spec.Dir, time.Now().Format(time.RFC3339))
+		log = &logWriter{file: f, now: time.Now, onLine: spec.OnLine}
+		fmt.Fprintf(log, "# huddle: %s in %s at %s\n", commandLine(spec), spec.Dir, time.Now().Format(time.RFC3339))
 	}
 
 	head := &headWriter{max: HeadLines}
@@ -88,8 +89,8 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 	if spec.Stream != nil {
 		writers = append(writers, spec.Stream)
 	}
-	if logFile != nil {
-		writers = append(writers, logFile)
+	if log != nil {
+		writers = append(writers, log)
 	}
 	combined := &lockedWriter{w: io.MultiWriter(writers...)}
 	var stdout bytes.Buffer
@@ -144,18 +145,27 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 		return res, fmt.Errorf("wait for %s: %w", spec.Name, waitErr)
 	}
 
-	if logFile != nil {
-		fmt.Fprintf(logFile, "\n# huddle: exit=%d timed_out=%t canceled=%t duration=%s\n",
+	if log != nil {
+		// Wait has returned, so the output copiers are finished and nothing
+		// else writes to the log any more. Like the other log writes, a
+		// failure here must not fail the run: Result still has the output.
+		_ = log.Flush()
+		fmt.Fprintf(log, "\n# huddle: exit=%d timed_out=%t canceled=%t duration=%s\n",
 			res.ExitCode, res.TimedOut, res.Canceled, res.Duration.Round(time.Second))
 	}
 	return res, nil
+}
+
+// LogDir returns the directory of the agents' log files, <home>/.huddle/logs.
+func LogDir(home string) string {
+	return filepath.Join(home, ".huddle", "logs")
 }
 
 // LogPath returns the log file path for a turn:
 // <home>/.huddle/logs/<timestamp>-turn<N>-<role>.log.
 func LogPath(home string, t time.Time, turn int, role string) string {
 	name := fmt.Sprintf("%s-turn%d-%s.log", t.Format("20060102-150405"), turn, role)
-	return filepath.Join(home, ".huddle", "logs", name)
+	return filepath.Join(LogDir(home), name)
 }
 
 // StripEnv returns env without the API key variables, so an agent can never

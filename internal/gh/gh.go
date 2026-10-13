@@ -56,6 +56,17 @@ type Client interface {
 	Comments(ctx context.Context, repo string, number int) ([]Comment, error)
 	// PostComment posts a comment on issue number.
 	PostComment(ctx context.Context, repo string, number int, body string) error
+	// MilestoneIssues returns all issues of milestone, open and closed,
+	// oldest first.
+	MilestoneIssues(ctx context.Context, repo, milestone string) ([]IssueState, error)
+	// OpenPullRequests returns the open pull requests on repo.
+	OpenPullRequests(ctx context.Context, repo string) ([]PullRequest, error)
+	// LastMergedPullRequest returns the most recently merged pull request;
+	// ok is false if there is none.
+	LastMergedPullRequest(ctx context.Context, repo string) (pr PullRequest, ok bool, err error)
+	// LatestRun returns the latest workflow run on branch; ok is false if
+	// there is none.
+	LatestRun(ctx context.Context, repo, branch string) (run Run, ok bool, err error)
 }
 
 // CLI implements Client by shelling out to gh.
