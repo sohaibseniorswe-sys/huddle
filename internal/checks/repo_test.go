@@ -111,37 +111,6 @@ func TestMatchRemote(t *testing.T) {
 	}
 }
 
-func TestCheckCleanTree(t *testing.T) {
-	tests := []struct {
-		name    string
-		status  string
-		wantErr string
-	}{
-		{"clean", "", ""},
-		{"only untracked Session.md", "?? Session.md\x00", ""},
-		{"only modified Session.md", " M Session.md\x00", ""},
-		{"modified file", " M main.go\x00", "main.go"},
-		{"Session.md plus another file", "?? Session.md\x00?? scratch.txt\x00", "scratch.txt"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := CheckCleanTree(tt.status)
-			if tt.wantErr == "" {
-				if err != nil {
-					t.Errorf("CheckCleanTree() = %v, want nil", err)
-				}
-				return
-			}
-			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
-				t.Errorf("CheckCleanTree() = %v, want error mentioning %q", err, tt.wantErr)
-			}
-			if strings.Contains(err.Error(), SessionFile) {
-				t.Errorf("CheckCleanTree() error mentions %s: %v", SessionFile, err)
-			}
-		})
-	}
-}
-
 func TestEnsureAgentFiles(t *testing.T) {
 	write := func(t *testing.T, dir, name, content string) {
 		t.Helper()

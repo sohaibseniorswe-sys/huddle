@@ -78,13 +78,17 @@ var codexLimitRe = regexp.MustCompile(linePrefix + `(?:` +
 //     ..." and "You hit your spend cap set ...";
 //   - the TUI's "You’ve reached your workspace credit limit" and "You’re out
 //     of credits.";
-//   - UsageNotIncluded: "To use Codex with your ChatGPT plan, upgrade to Plus: ...".
+//   - UsageNotIncluded: "To use Codex with your ChatGPT plan, upgrade to Plus: ...";
+//   - QuotaExceeded: "Quota exceeded. Check your plan and billing details.",
+//     which only API-key billing produces. Huddle never uses an API key, so
+//     seeing it means something is wrong with the login.
 var codexEscalateRe = regexp.MustCompile(linePrefix + `(?:` +
 	`Your workspace is out of credits\.` +
 	`|You[’']re out of credits\.` +
 	`|You hit your spend cap\b` +
 	`|You[’']ve reached your workspace credit limit\b` +
 	`|To use Codex with your ChatGPT plan, upgrade to\b` +
+	`|Quota exceeded\. Check your plan and billing details\.` +
 	`).*$`)
 
 // codexRetryRe extracts the reset time from " Try again at <time>." or

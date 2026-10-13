@@ -9,22 +9,63 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sohaibseniorswe-sys/huddle/internal/checks"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
+	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
+	"github.com/sohaibseniorswe-sys/huddle/internal/session"
 )
 
 const sandbox = "sohaibseniorswe-sys/huddle-sandbox"
 
+// stopClock ends the watch loop at its first poll, as Ctrl+C would.
+type stopClock struct{}
+
+func (stopClock) Now() time.Time { return time.Now() }
+
+func (stopClock) Sleep(context.Context, time.Duration) error { return context.Canceled }
+
+// noAgents fails the test if an agent runs.
+type noAgents struct{ t *testing.T }
+
+func (a noAgents) Run(context.Context, session.Role, string, string, int) (loop.Result, error) {
+	a.t.Error("an agent ran")
+	return loop.Result{}, nil
+}
+
+// fakeAgent records runs and ends each turn by setting label.
+type fakeAgent struct {
+	gh    *gh.Fake
+	label string
+	runs  []session.Role
+}
+
+func (a *fakeAgent) Run(_ context.Context, role session.Role, _, _ string, _ int) (loop.Result, error) {
+	a.runs = append(a.runs, role)
+	a.gh.Issues[0].Labels = append(a.gh.Issues[0].Labels, a.label)
+	return loop.Result{SessionID: "sess-" + string(role)}, nil
+}
+
 // testDeps returns deps whose external calls all succeed, rooted at dir.
-func testDeps(dir string, env map[string]string, stdin string) (deps, *bytes.Buffer, *bytes.Buffer) {
+// HOME is a temp dir unless env sets it.
+func testDeps(t *testing.T, dir string, env map[string]string, stdin string) (deps, *bytes.Buffer, *bytes.Buffer) {
 	var stdout, stderr bytes.Buffer
+	home := t.TempDir()
 	return deps{
-		stdin:     strings.NewReader(stdin),
-		stdout:    &stdout,
-		stderr:    &stderr,
-		getwd:     func() (string, error) { return dir, nil },
-		lookupEnv: func(k string) (string, bool) { v, ok := env[k]; return v, ok },
+		stdin:  strings.NewReader(stdin),
+		stdout: &stdout,
+		stderr: &stderr,
+		getwd:  func() (string, error) { return dir, nil },
+		lookupEnv: func(k string) (string, bool) {
+			if v, ok := env[k]; ok {
+				return v, ok
+			}
+			if k == "HOME" {
+				return home, true
+			}
+			return "", false
+		},
 		gh: &gh.Fake{Issues: []gh.Issue{{
 			Number: 3, Title: "Sandbox Control", Milestone: "Sandbox M1",
 			Labels: []string{"control"},
@@ -38,6 +79,8 @@ func testDeps(dir string, env map[string]string, stdin string) (deps, *bytes.Buf
 				return `{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}`, "", nil
 			},
 		},
+		runAgents: func(string, string) loop.Agents { return noAgents{t} },
+		clock:     stopClock{},
 	}, &stdout, &stderr
 }
 
@@ -81,7 +124,7 @@ func gitRepo(t *testing.T, origin string) string {
 }
 
 func TestVersion(t *testing.T) {
-	d, stdout, _ := testDeps(t.TempDir(), nil, "")
+	d, stdout, _ := testDeps(t, t.TempDir(), nil, "")
 	if code := run(context.Background(), []string{"--version"}, d); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
@@ -92,7 +135,7 @@ func TestVersion(t *testing.T) {
 
 func TestRepoFlagValidation(t *testing.T) {
 	for _, bad := range []string{"palantir", "a/b/c", "https://github.com/a/b", "", "owner/"} {
-		d, _, stderr := testDeps(t.TempDir(), nil, "")
+		d, _, stderr := testDeps(t, t.TempDir(), nil, "")
 		if code := run(context.Background(), []string{"--repo", bad}, d); code != 2 {
 			t.Errorf("--repo %q: exit %d, want 2", bad, code)
 		}
@@ -103,7 +146,7 @@ func TestRepoFlagValidation(t *testing.T) {
 }
 
 func TestUnexpectedArgs(t *testing.T) {
-	d, _, _ := testDeps(t.TempDir(), nil, "")
+	d, _, _ := testDeps(t, t.TempDir(), nil, "")
 	if code := run(context.Background(), []string{"extra"}, d); code != 2 {
 		t.Errorf("exit %d, want 2", code)
 	}
@@ -113,7 +156,7 @@ func TestRefusesWithAPIKeys(t *testing.T) {
 	for _, key := range checks.APIKeyVars {
 		t.Run(key, func(t *testing.T) {
 			dir := gitRepo(t, "https://github.com/"+sandbox+".git")
-			d, stdout, stderr := testDeps(dir, map[string]string{key: "sk-test"}, "y\n")
+			d, stdout, stderr := testDeps(t, dir, map[string]string{key: "sk-test"}, "y\n")
 			if code := run(context.Background(), []string{"--repo", sandbox}, d); code != 1 {
 				t.Fatalf("exit %d, want 1", code)
 			}
@@ -129,18 +172,21 @@ func TestRefusesWithAPIKeys(t *testing.T) {
 
 func TestStartupSummary(t *testing.T) {
 	dir := gitRepo(t, "git@github.com:"+sandbox+".git")
-	d, stdout, stderr := testDeps(dir, map[string]string{}, "\n")
-	if code := run(context.Background(), []string{"--repo", sandbox}, d); code != 0 {
+	// A dirty tree is fine: after an interrupted run it normally is.
+	os.WriteFile(filepath.Join(dir, "scratch.txt"), []byte("x"), 0o644)
+	d, stdout, stderr := testDeps(t, dir, map[string]string{}, "\n")
+	// No state label: the loop prints the hint and polls; stopClock ends it.
+	if code := run(context.Background(), []string{"--repo", sandbox}, d); code != loop.ExitInterrupted {
 		t.Fatalf("exit %d, stderr: %s", code, stderr.String())
 	}
 	out := stdout.String()
 	for _, want := range []string{
 		"target: " + sandbox + " (override)",
-		"working tree clean",
 		"created empty Session.md",
 		"labels ready (created control, state:dev-ready",
 		`control issue #3 "Sandbox Control", milestone "Sandbox M1", state: none`,
 		"Continue? [Y/n]",
+		"add state:dev-ready to start",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q:\n%s", want, out)
@@ -153,7 +199,7 @@ func TestStartupSummary(t *testing.T) {
 
 func TestStartupDeclined(t *testing.T) {
 	dir := gitRepo(t, "https://github.com/"+sandbox)
-	d, stdout, _ := testDeps(dir, nil, "n\n")
+	d, stdout, _ := testDeps(t, dir, nil, "n\n")
 	if code := run(context.Background(), []string{"--repo", sandbox}, d); code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
@@ -162,21 +208,43 @@ func TestStartupDeclined(t *testing.T) {
 	}
 }
 
-func TestStartupYesSkipsPrompt(t *testing.T) {
+func TestStartupYesOnceRunsOneTurn(t *testing.T) {
 	dir := gitRepo(t, "https://github.com/"+sandbox)
-	d, stdout, _ := testDeps(dir, nil, "")
+	d, stdout, stderr := testDeps(t, dir, nil, "")
+	fake := d.gh.(*gh.Fake)
+	fake.Issues[0].Labels = append(fake.Issues[0].Labels, gh.StateDevReady)
+	agent := &fakeAgent{gh: fake, label: gh.StatePMReady}
+	var gotDir, gotHome string
+	d.runAgents = func(dir, home string) loop.Agents { gotDir, gotHome = dir, home; return agent }
 	if code := run(context.Background(), []string{"--repo", sandbox, "--yes", "--once"}, d); code != 0 {
-		t.Fatalf("exit %d", code)
+		t.Fatalf("exit %d, stderr: %s", code, stderr.String())
 	}
 	if strings.Contains(stdout.String(), "Continue?") {
 		t.Error("--yes still prompted")
+	}
+	if len(agent.runs) != 1 || agent.runs[0] != session.Dev {
+		t.Errorf("runs = %v, want one Dev turn", agent.runs)
+	}
+	if real, _ := filepath.EvalSymlinks(dir); gotDir != real && gotDir != dir {
+		t.Errorf("agents run in %q, want the repo root %q", gotDir, dir)
+	}
+	home, _ := d.lookupEnv("HOME")
+	if gotHome != home {
+		t.Errorf("home = %q", gotHome)
+	}
+	store := session.New(home, sandbox, 3)
+	if got := store.Load().Dev; got != "sess-dev" {
+		t.Errorf("saved dev session = %q, want it under HOME/.huddle/sessions", got)
+	}
+	if got := checks.States(fake.Issues[0]); len(got) != 1 || got[0] != "pm-ready" {
+		t.Errorf("states = %v", got)
 	}
 }
 
 func TestStartupFailures(t *testing.T) {
 	t.Run("default target, sandbox clone", func(t *testing.T) {
 		dir := gitRepo(t, "https://github.com/"+sandbox)
-		d, _, stderr := testDeps(dir, nil, "y\n")
+		d, _, stderr := testDeps(t, dir, nil, "y\n")
 		if code := run(context.Background(), nil, d); code != 1 {
 			t.Fatalf("exit %d, want 1", code)
 		}
@@ -184,19 +252,8 @@ func TestStartupFailures(t *testing.T) {
 			t.Errorf("stderr %q", stderr.String())
 		}
 	})
-	t.Run("dirty tree", func(t *testing.T) {
-		dir := gitRepo(t, "https://github.com/"+sandbox)
-		os.WriteFile(filepath.Join(dir, "scratch.txt"), []byte("x"), 0o644)
-		d, _, stderr := testDeps(dir, nil, "y\n")
-		if code := run(context.Background(), []string{"--repo", sandbox}, d); code != 1 {
-			t.Fatalf("exit %d, want 1", code)
-		}
-		if !strings.Contains(stderr.String(), "scratch.txt") {
-			t.Errorf("stderr %q", stderr.String())
-		}
-	})
 	t.Run("not a git repo", func(t *testing.T) {
-		d, _, stderr := testDeps(t.TempDir(), nil, "y\n")
+		d, _, stderr := testDeps(t, t.TempDir(), nil, "y\n")
 		if code := run(context.Background(), []string{"--repo", sandbox}, d); code != 1 {
 			t.Fatalf("exit %d, want 1", code)
 		}
@@ -206,7 +263,7 @@ func TestStartupFailures(t *testing.T) {
 	})
 	t.Run("gh not logged in", func(t *testing.T) {
 		dir := gitRepo(t, "https://github.com/"+sandbox)
-		d, _, stderr := testDeps(dir, nil, "y\n")
+		d, _, stderr := testDeps(t, dir, nil, "y\n")
 		d.gh = &gh.Fake{AuthErr: errors.New("not logged in")}
 		if code := run(context.Background(), []string{"--repo", sandbox}, d); code != 1 {
 			t.Fatalf("exit %d, want 1", code)

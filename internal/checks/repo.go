@@ -9,8 +9,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-
-	"github.com/sohaibseniorswe-sys/huddle/internal/gitx"
 )
 
 // DefaultRepo is the target repo when --repo is not given.
@@ -80,23 +78,6 @@ func MatchRemote(remoteURL, target string) error {
 		return fmt.Errorf("origin is %s, but the target repo is %s", got, target)
 	}
 	return nil
-}
-
-// CheckCleanTree takes `git status --porcelain -z` output and reports an
-// error listing the dirty paths, ignoring Session.md at the repo root.
-func CheckCleanTree(porcelainZ string) error {
-	dirty := gitx.DirtyPaths(porcelainZ, SessionFile)
-	if len(dirty) == 0 {
-		return nil
-	}
-	const max = 10
-	shown := dirty
-	more := ""
-	if len(dirty) > max {
-		shown = dirty[:max]
-		more = fmt.Sprintf(" (and %d more)", len(dirty)-max)
-	}
-	return fmt.Errorf("working tree not clean: %s%s", strings.Join(shown, ", "), more)
 }
 
 // EnsureAgentFiles checks that AGENTS.md and CLAUDE.md exist in root and

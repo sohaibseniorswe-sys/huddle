@@ -18,6 +18,8 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/checks"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gitx"
+	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
+	"github.com/sohaibseniorswe-sys/huddle/internal/session"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
@@ -32,6 +34,10 @@ type deps struct {
 	lookupEnv func(string) (string, bool)
 	gh        gh.Client
 	agents    checks.AgentCLIs
+	// runAgents runs the agents for the watch loop in repo root dir; nil
+	// means the real CLIs.
+	runAgents func(dir, home string) loop.Agents
+	clock     loop.Clock
 }
 
 func main() {
@@ -45,6 +51,10 @@ func main() {
 		lookupEnv: os.LookupEnv,
 		gh:        gh.CLI{},
 		agents:    checks.AgentCLIs{LookPath: exec.LookPath, Run: checks.ExecRun},
+		runAgents: func(dir, home string) loop.Agents {
+			return loop.CLIAgents{Dir: dir, Home: home, Stream: os.Stdout}
+		},
+		clock: loop.RealClock{},
 	}))
 }
 
@@ -127,17 +137,8 @@ func run(ctx context.Context, args []string, d deps) int {
 	}
 	ok("git repo %s, remote %s", tildePath(root, d.lookupEnv), target)
 
-	// Check 3: clean working tree, ignoring Session.md.
-	status, err := gitx.StatusPorcelain(ctx, root)
-	if err != nil {
-		return fail(err)
-	}
-	if err := checks.CheckCleanTree(status); err != nil {
-		return fail(err)
-	}
-	ok("working tree clean")
-
-	// Check 4: agent files.
+	// Check 3: agent files. There is no clean-tree check: after an
+	// interrupted run the tree is normally dirty, and the agent resumes.
 	created, err := checks.EnsureAgentFiles(root)
 	if err != nil {
 		return fail(err)
@@ -148,7 +149,7 @@ func run(ctx context.Context, args []string, d deps) int {
 		ok("AGENTS.md, CLAUDE.md and %s present", checks.SessionFile)
 	}
 
-	// Checks 5 and 6: gh login, repo access, labels.
+	// Checks 4 and 5: gh login, repo access, labels.
 	if err := checks.CheckGitHub(ctx, d.gh, target); err != nil {
 		return fail(err)
 	}
@@ -162,13 +163,13 @@ func run(ctx context.Context, args []string, d deps) int {
 		ok("gh logged in, repo access ok, labels ready")
 	}
 
-	// Check 7: agent CLIs with subscription logins.
+	// Check 6: agent CLIs with subscription logins.
 	if err := d.agents.Check(ctx); err != nil {
 		return fail(err)
 	}
 	ok("codex and claude installed with subscription logins, no API keys in env")
 
-	// Check 8: the control issue.
+	// Check 7: the control issue.
 	control, err := checks.FindControlIssue(ctx, d.gh, target)
 	if err != nil {
 		return fail(err)
@@ -179,15 +180,26 @@ func run(ctx context.Context, args []string, d deps) int {
 	}
 	ok("control issue #%d %q, milestone %q, state: %s", control.Number, control.Title, control.Milestone, state)
 
-	// Check 9: confirmation.
+	// Check 8: confirmation.
 	if !opts.yes && !checks.Confirm(d.stdin, d.stdout) {
 		fmt.Fprintln(d.stdout, "aborted")
 		return 1
 	}
 
-	// The turn loop arrives in a later milestone; --once is a no-op until then.
-	fmt.Fprintln(d.stdout, "startup checks passed; the turn loop is not implemented yet")
-	return 0
+	home, hasHome := d.lookupEnv("HOME")
+	if !hasHome || home == "" {
+		return fail(errors.New("HOME is not set"))
+	}
+	l := &loop.Loop{
+		Control:   gh.Control{Client: d.gh, Repo: target, Number: control.Number},
+		Milestone: control.Milestone,
+		Agents:    d.runAgents(root, home),
+		Sessions:  session.New(home, target, control.Number),
+		Clock:     d.clock,
+		Out:       d.stdout,
+		Once:      opts.once,
+	}
+	return l.Run(ctx)
 }
 
 // tildePath shortens a path under $HOME to start with "~".

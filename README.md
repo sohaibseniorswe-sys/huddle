@@ -1,8 +1,8 @@
 # Huddle
 
-Huddle lets two AI coding agents complete a GitHub milestone from design to delivery in one go: Codex CLI as the Dev agent, Claude Code as the PM agent. The agents talk through a control issue: they post their own comments on it and set its `state:*` label at the end of each turn. Huddle watches the label and starts whichever agent's turn it is; it adds no limits, timeouts or restrictions. The human is involved only if the PM sets `state:human-required`. The spec is [MVP_PLAN.md](MVP_PLAN.md).
+Huddle lets two AI coding agents complete a GitHub milestone from design to delivery in one go: Codex CLI as the Dev agent, Claude Code as the PM agent. The agents talk through a control issue: they post their own comments on it and set its `state:*` label at the end of each turn. Huddle watches the label and starts whichever agent's turn it is; it adds no limits, timeouts or restrictions. The human is involved only if the PM sets `state:human-required`, or Huddle does for an account or credit error. The spec is [MVP_PLAN.md](MVP_PLAN.md).
 
-**Status:** Milestone 3 is done: agent commands with full permissions and session resume, the session store, control-issue operations, usage-limit detection and the embedded operating principles. The watch loop that ties them together comes in Milestone 4; until then `huddle` runs the startup checks and exits. Milestone 1's startup checks still include the clean-tree check, which Milestone 4 removes. The full README (install, usage, labels, troubleshooting) comes in Milestone 5.4.
+**Status:** Milestone 4 is done: the watch loop is wired to the startup checks, and `huddle` runs the agents in turns until `state:done`. Next is Milestone 5: single turns and the full loop in the sandbox, then the pilot on palantir. The full README (install, troubleshooting) comes in Milestone 5.4.
 
 ## Build and run
 
@@ -18,7 +18,7 @@ cd ~/projects/huddle-sandbox && huddle --repo sohaibseniorswe-sys/huddle-sandbox
 |------|---------|
 | `--repo owner/name` | Target repo. Default `sohaibseniorswe-sys/palantir`. Use the sandbox for testing. |
 | `--yes` | Skip the `Continue? [Y/n]` prompt. |
-| `--once` | Run a single agent turn, then exit (no-op until the watch loop exists, Milestone 4). |
+| `--once` | Run a single agent turn (including its resume fallback, usage-limit wait or escalation, and anti-stall), then exit. Used for the first sandbox runs. |
 | `--version` | Print the version. |
 
 ## Startup checks
@@ -27,13 +27,56 @@ Huddle runs these checks in order and stops at the first failure, printing the r
 
 1. Neither `OPENAI_API_KEY` nor `ANTHROPIC_API_KEY` is set.
 2. The current directory is in a git repo whose `origin` is the target repo on github.com.
-3. The working tree is clean, ignoring `Session.md`. (Old design: removed in Milestone 4, so Huddle can resume an agent after an interrupted run.)
-4. `AGENTS.md` and `CLAUDE.md` exist. `Session.md` is created empty if it is missing.
-5. `gh` is logged in and can see the target repo.
-6. All Huddle labels exist on the target repo (missing ones are created; existing ones are left alone).
-7. `codex` and `claude` are on `PATH` and logged in with a subscription.
-8. Exactly one open issue is labelled `control`, and it has a milestone.
-9. Huddle prints the summary and asks `Continue? [Y/n]` (skipped with `--yes`).
+3. `AGENTS.md` and `CLAUDE.md` exist. `Session.md` is created empty if it is missing.
+4. `gh` is logged in and can see the target repo.
+5. All Huddle labels exist on the target repo (missing ones are created; existing ones are left alone).
+6. `codex` and `claude` are on `PATH` and logged in with a subscription.
+7. Exactly one open issue is labelled `control`, and it has a milestone.
+8. Huddle prints the summary and asks `Continue? [Y/n]` (skipped with `--yes`).
+
+There is no clean-tree check: after an interrupted run the tree is normally dirty, and Huddle must be able to resume the agent.
+
+## The watch loop
+
+Once the checks pass, Huddle watches the control issue (`internal/loop`). It reads the issue's `state:*` label every 30 seconds while no agent is running, and straight after each agent exits. Only one agent runs at a time. Huddle never stops on its own: it exits on `state:done` (status 0), on Ctrl+C (status 130), or after one turn with `--once`.
+
+To start a run, add `state:dev-ready` to the control issue (or `state:pm-ready` to have the PM write the first Dev prompt).
+
+### Labels
+
+| Label | Set by | What Huddle does |
+|-------|--------|------------------|
+| `control` | human | Marks the control issue. |
+| `state:dev-ready` | agents, or the human to start | Runs a Dev (Codex) turn. |
+| `state:dev-working` | Huddle, while Codex runs | Found at startup, it means a previous Huddle was interrupted: Codex is started again, resuming its session. |
+| `state:pm-ready` | agents, or the human | Runs a PM (Claude Code) turn. |
+| `state:pm-working` | Huddle, while the PM runs | As `dev-working`, for the PM. |
+| `state:human-required` | PM, or Huddle for account and credit errors | Prints the latest control-issue comment (once per new comment) and keeps polling until someone sets a ready label. |
+| `state:done` | PM | Prints the PM's final report (the latest comment) and exits 0. |
+| none | | Prints "add state:dev-ready to start" once and keeps polling. |
+
+Agents set labels with `gh issue edit --add-label` and may leave the old one in place, so Huddle normalises: if several state labels are present, the first of `human-required`, `done`, `pm-ready`, `dev-ready`, `pm-working`, `dev-working` wins and the others are removed. Whenever Huddle sets a label it removes every other `state:*` label.
+
+### A turn
+
+1. Huddle sets `state:dev-working` or `state:pm-working`.
+2. It sends the launch prompt (the operating principles, below) on stdin and runs the agent, resuming its saved session if there is one. Output is streamed to the terminal and saved to `~/.huddle/logs/<timestamp>-turn<N>-<role>.log`. There is no timeout.
+3. When the agent exits, Huddle saves its session id and reads the label again. If the agent set a new label, that decides what happens next.
+4. If the label is unchanged, Huddle checks the output for usage-limit messages first (below), then applies the resume fallback, then anti-stall.
+
+**Anti-stall.** If an agent exits without setting a new `state:*` label, whatever its exit code, Huddle posts a comment on the control issue with the agent's final message and exit code, marked `<!-- huddle:auto-handoff role=dev|pm -->`, and hands the turn to the other agent: `state:pm-ready` after Codex, `state:dev-ready` after the PM.
+
+**Usage limits.** A limited run never hands over and never forgets its session. Huddle posts one comment marked `<!-- huddle:usage-wait role=dev|pm -->` (with the reset time if the CLI gave one), keeps the `*-working` label, sleeps until the reset plus one minute (or retries every 15 minutes if there is no usable reset time), then resumes the same session with the normal launch prompt. Retries within the same wait post no new comment. An account or credit error (see Usage-limit messages) instead gets one comment marked `<!-- huddle:escalate role=dev|pm -->` with the CLI's exact message, and `state:human-required`. The agent's session is kept, so it resumes when the human sets its ready label again. This is the only time Huddle itself sets `state:human-required`.
+
+**GitHub errors.** If a `gh` call fails, Huddle prints a warning and retries it every 30 seconds rather than stopping.
+
+### Sessions
+
+Huddle keeps one session id per agent per control issue in `~/.huddle/sessions/<owner>_<repo>_<control-issue>.json` (`{"dev": "...", "pm": "..."}`), so sessions survive a restart of Huddle. Each run's session id replaces the saved one. **Fallback:** if a resumed run exits non-zero without setting a new label (and without a usage-limit message), Huddle forgets that session and runs the same turn once more in a fresh session; only if that run also leaves the label unchanged does anti-stall apply. To start an agent afresh, delete the session file or its entry. Each control issue has its own file, so a new control issue starts with fresh sessions.
+
+### Ctrl+C
+
+Ctrl+C reaches only Huddle (each agent runs in its own process group). If an agent is running, Huddle kills its whole process group, saves its session id, puts back that agent's ready label so the next `huddle` resumes it, and exits 130. The same applies while Huddle is waiting out a usage limit. While no agent is running, Huddle just exits 130. If Huddle is killed outright (no Ctrl+C), the `*-working` label stays, and the next `huddle` treats it as that agent's ready label.
 
 ## Decisions
 
@@ -81,7 +124,7 @@ Checked on 2026-10-12 against `codex exec --help`, `codex exec resume --help` an
 
 ### PM (Claude Code)
 
-- **`--dangerously-skip-permissions`** ("Bypass all permission checks") exists in 2.1.296 under that name. No `--permission-mode`, `--allowedTools`, `--disallowedTools` or `--add-dir`.
+- **`--dangerously-skip-permissions`** ("Bypass all permission checks") exists in 2.1.296 under that name. No `--permission-mode`, no allow or deny lists of tools, no `--add-dir`.
 - **`--resume <session-id>`** resumes by id; `--continue` (most recent conversation in the directory) is never used. A bad id prints `No conversation found with session ID: <id>` and exits 1.
 - **JSON envelope.** With `--output-format json`, stdout is a single JSON object (`runner.ParseClaude`). `session_id` is the session id (the same on resume); `result` is the final message; `is_error` and `subtype` report failures. `total_cost_usd` is a notional list-price figure (`"costBasis": "list"`); runs use the claude.ai subscription login with no API key in the environment, so nothing is billed.
 
@@ -136,13 +179,17 @@ Codex uses a typographic apostrophe (U+2019) in most of these; a plain one is ac
 
 - `To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.`
 
+**API quota: escalate:**
+
+- `Quota exceeded. Check your plan and billing details.` This only appears with API-key billing, which should never happen: Huddle refuses to start with an API key set and strips both keys from the agents' environment. If it appears anyway, the Codex login is not the ChatGPT subscription it should be, so Huddle stops and asks the human.
+
 **Interactive (TUI) notices**, not expected from `codex exec` but matched in case they appear (no reset time):
 
 - `Usage limit reached. You’ve reached your usage limit. Increase your limits to continue using codex.` (wait, 15-minute retries)
 - `You’ve reached your workspace credit limit` (escalate)
 - `You’re out of credits. Your workspace is out of credits. Add credits to continue using Codex.` (escalate)
 
-**Not matched:** `Quota exceeded. Check your plan and billing details.` (API-key billing, which Huddle never uses) and `exceeded retry limit, last status: 429 ...` (transient rate limiting that codex retries itself).
+**Not matched:** `exceeded retry limit, last status: 429 ...` (transient rate limiting that codex retries itself).
 
 ### Claude Code (`2.1.296`)
 
