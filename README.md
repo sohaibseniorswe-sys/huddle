@@ -101,13 +101,18 @@ The unit tests use recorded real output in `internal/runner/testdata/`.
 
 Taken from the installed CLIs on 2026-10-12. Codex is open source and its strings were read from the installed binary; Claude Code's were read from its installed bundle, including the function that builds the message for each limit type and Claude Code's own list of limit-message prefixes. Neither limit has been hit in practice yet, so the exact output as printed by `codex exec` and `claude -p` is still unobserved. Huddle matches only the messages below, at the start of a line (optionally after an `ERROR:`, `Error:` or `API Error:` prefix), so test output that merely mentions a limit is not mistaken for one (`runner.CodexUsageLimit`, `runner.ClaudeUsageLimit`). Each message below has a test case in `internal/runner/usage_test.go`.
 
-A message without a reset time, or with one in any other format, still counts as a usage limit, with no time; the loop then retries every 15 minutes (section 8.6).
+Each message is handled in one of two ways (MVP_PLAN.md section 8.6):
+
+- **Wait.** Any message with a reset time: Huddle sleeps until the reset plus one minute, then resumes the same agent. A plain usage limit (session, weekly, model-specific and similar plan limits) with no reset time, or with one in a format Huddle can't parse, also waits, retrying every 15 minutes.
+- **Escalate.** Account-setup errors, and spend-cap, out-of-credits and spend-limit messages with no reset time. Only money or account changes can fix these, so Huddle posts the CLI's exact message (without the `ERROR:` prefix) as the reason, with the marker `<!-- huddle:escalate role=dev|pm -->`, and sets `state:human-required`. The agent's session is kept for when the human sets a ready label again.
+
+If one run's output contains several of these, a message with a reset time wins, then an escalation, then a plain usage limit.
 
 ### Codex (`codex-cli 0.160.0`)
 
 Codex uses a typographic apostrophe (U+2019) in most of these; a plain one is accepted too. The core messages are reassembled from string fragments in the binary, so the joins between fragments are inferred.
 
-**Usage limit** (`UsageLimitReachedError`, printed by `codex exec` as an error line). The ending is ` Try again at <time>.`, `, or try again at <time>.` / ` or try again at <time>.`, or ` Try again later.` when the reset time is unknown.
+**Usage limit: wait** (`UsageLimitReachedError`, printed by `codex exec` as an error line). The ending is ` Try again at <time>.`, `, or try again at <time>.` / ` or try again at <time>.`, or ` Try again later.` when the reset time is unknown.
 
 | Variant | Message |
 |---------|---------|
@@ -120,26 +125,30 @@ Codex uses a typographic apostrophe (U+2019) in most of these; a plain one is ac
 
 `<time>` is in the machine's **local time zone**: `3:45 PM` if the reset is today, otherwise `Oct 13th, 2026 3:45 PM` (chrono formats `%-I:%M %p` and `%b %-d<st|nd|rd|th>, %Y %-I:%M %p`).
 
-**Workspace spend control** (no reset time):
+**Workspace spend control: escalate** (no reset time):
 
 - `Your workspace is out of credits. Add credits to continue.`
 - `Your workspace is out of credits. Ask your workspace owner to refill in order to continue.`
 - `You hit your spend cap set in your workspace. Increase your spend cap to continue.`
 - `You hit your spend cap set by the owner of your workspace. Ask an owner to increase your spend cap to continue.`
 
+**Plan does not include Codex: escalate** (`UsageNotIncluded`):
+
+- `To use Codex with your ChatGPT plan, upgrade to Plus: https://chatgpt.com/explore/plus.`
+
 **Interactive (TUI) notices**, not expected from `codex exec` but matched in case they appear (no reset time):
 
-- `Usage limit reached. You’ve reached your usage limit. Increase your limits to continue using codex.`
-- `You’ve reached your workspace credit limit`
-- `You’re out of credits. Your workspace is out of credits. Add credits to continue using Codex.`
+- `Usage limit reached. You’ve reached your usage limit. Increase your limits to continue using codex.` (wait, 15-minute retries)
+- `You’ve reached your workspace credit limit` (escalate)
+- `You’re out of credits. Your workspace is out of credits. Add credits to continue using Codex.` (escalate)
 
-**Not matched:** `Quota exceeded. Check your plan and billing details.` (API-key billing, which Huddle never uses), `To use Codex with your ChatGPT plan, upgrade to Plus: ...` (the plan does not include Codex at all; nothing resets), and `exceeded retry limit, last status: 429 ...` (transient rate limiting that codex retries itself).
+**Not matched:** `Quota exceeded. Check your plan and billing details.` (API-key billing, which Huddle never uses) and `exceeded retry limit, last status: 429 ...` (transient rate limiting that codex retries itself).
 
 ### Claude Code (`2.1.296`)
 
 In `-p --output-format json` mode the message is the envelope's `result` (with `is_error: true`); Huddle also checks the raw output. Messages are built as `You've hit your <limit>` followed by ` · `-separated parts: advice, the reset, and optionally ` · progress saved`.
 
-**Plan limits** (`You've hit your <limit> · resets <time>[ · progress saved]`):
+**Plan limits: wait**, with or without a reset time (`You've hit your <limit> · resets <time>[ · progress saved]`):
 
 | Limit type | `<limit>` |
 |------------|-----------|
@@ -150,9 +159,9 @@ In `-p --output-format json` mode the message is the envelope's `result` (with `
 | Weekly Fable (`seven_day_overage_included`) | `Fable limit` |
 | Other / unknown type | `usage limit`, or `limit` when usage credits are also exhausted |
 
-For example `You've hit your weekly limit · resets Oct 15, 10am (Europe/London)` or `You've hit your Opus limit · resets 9:30am (Europe/London)`. With no reset time, `You've hit your usage limit · contact your admin to increase it`.
+For example `You've hit your weekly limit · resets Oct 15, 10am (Europe/London)` or `You've hit your Opus limit · resets 9:30am (Europe/London)`. With no reset time, `You've hit your usage limit · contact your admin to increase it` (15-minute retries). `Usage limit reached · limit resets <time>` (the wait notice) and the older format `Claude AI usage limit reached|<unix seconds>` are plan limits too.
 
-**Spend and credit limits.** The reset, if any, is given as ` · your <plan limit> resets <time>` or ` · resets <time>`:
+**Spend and credit limits: wait if they give a reset time, otherwise escalate.** The reset, if any, is given as ` · your <plan limit> resets <time>` or ` · resets <time>`:
 
 - `You've hit your monthly spend limit · raise it at <url>[ · your <limit> resets <time>]` (also `You've hit your monthly spend limit.`)
 - `You've hit your org's monthly spend limit · ...`, `You've hit your individual spend limit · ...`
@@ -161,12 +170,18 @@ For example `You've hit your weekly limit · resets Oct 15, 10am (Europe/London)
 - `You've hit your team's shared budget · raise it at <url>[ · your <limit> resets <time>]`
 - `You've reached your Fable limit. Switch to another model to continue.`
 - `You're out of usage credits[ · resets <time>][ · progress saved]`, `You're out of extra usage`, `Your org is out of usage · add funds to continue` / `· contact your admin`
-- `Usage limit reached · limit resets <time>` (the wait notice)
-- The older format `Claude AI usage limit reached|<unix seconds>`
+
+**Account-setup errors: always escalate**, since no wait will fix them:
+
+- `Your seat type doesn't include usage credits`, `Your seat type doesn't include usage`, `Your seat type doesn't include extra usage`
+- `This service is disabled for your org`
+- `Your usage allocation has been disabled by your admin · ...`
+- `Your group's usage limit is set to $0 · ...`
+- `<model> requires usage credits. ...`, for example `Opus 5 requires usage credits. Switch to another model to continue.` or `Fable 5 requires usage credits. ...`
 
 `<time>` is `3pm` or `3:30pm` if the reset is within 24 hours (so a time already past today means tomorrow), otherwise `Oct 13, 3pm`, with the year added (`Jan 2, 2027, 3pm`) if it differs; the zone in parentheses is the user's IANA time zone.
 
-**Not matched:** `You've hit your fast limit · resets in <duration>` (a fast-mode cooldown; `-p` runs don't use fast mode), the warnings `You've used <n>% of your <limit> · ...` and `You're close to your ...`, and account-configuration errors that no wait will fix: `Your seat type doesn't include usage credits`, `This service is disabled for your org`, `Your usage allocation has been disabled by your admin`, `Your group's usage limit is set to $0`, `<model> requires usage credits.`
+**Not matched:** `You've hit your fast limit · resets in <duration>` (a fast-mode cooldown; `-p` runs don't use fast mode) and the warnings `You've used <n>% of your <limit> · ...` and `You're close to your ...`.
 
 ## Sessions and the control issue
 

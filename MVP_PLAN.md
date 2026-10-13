@@ -165,7 +165,7 @@ Huddle creates these on the target repo if missing (idempotent):
 | `state:dev-working` | Huddle | Codex is running (visibility only) |
 | `state:pm-ready` | agents (or human) | PM's turn |
 | `state:pm-working` | Huddle | PM is running (visibility only) |
-| `state:human-required` | PM | Waiting for the human |
+| `state:human-required` | PM, or Huddle for account and credit errors (8.6) | Waiting for the human |
 | `state:done` | PM | Milestone finished |
 
 Agents set the label with `gh issue edit`. They may forget to remove the old one, so Huddle normalises: after each run it removes its own `*-working` label, and whenever it sets a label it removes all other `state:*` labels. If several non-working `state:*` labels are present when Huddle reads the issue, it takes the first in this order and removes the rest: `human-required`, `done`, `pm-ready`, `dev-ready`.
@@ -232,7 +232,7 @@ Huddle reads the control issue's `state:*` label (normalised, section 5) every 3
 2. Build the launch prompt (section 9).
 3. Run the agent (section 6), resuming its saved session if there is one. Stream output to the terminal and save it to `~/.huddle/logs/<timestamp>-turn<N>-<role>.log`, where N is a counter local to this Huddle process (used for log names only). No timeout.
 4. After it exits, kill its process group (as the runner already does), save its session id (8.4), remove Huddle's `*-working` label, and read the label again.
-5. If the agent set a label, go back to 8.1. If its output shows a usage limit, wait and resume (8.6). Otherwise apply anti-stall (8.3).
+5. If the agent set a label, go back to 8.1. If its output shows a usage limit, wait and resume; if it shows an account or credit error, escalate to the human (8.6). Otherwise apply anti-stall (8.3).
 
 ### 8.3 Anti-stall
 
@@ -258,10 +258,14 @@ Huddle never stops the loop on its own.
 
 A subscription usage limit is not a reason to hand the turn over: the other agent cannot finish the first one's work.
 
-1. **Detect.** After a run that left the label unchanged, check the agent's output (log, final message, and for Claude Code the JSON envelope) for that CLI's usage-limit message. The usage-limit check comes before the resume fallback and anti-stall: a limited run never forgets its session and never hands over.
+1. **Detect.** After a run that left the label unchanged, check the agent's output (log, final message, and for Claude Code the JSON envelope) for that CLI's usage-limit, account and credit messages (listed in the README). The check comes before the resume fallback and anti-stall: a limited or escalated run never forgets its session and never hands over. Each message falls into one of three cases:
+   - **Wait** (steps 2–4): any message that gives a reset time, and plain usage limits without one (session, weekly, model-specific and similar plan limits).
+   - **Escalate** (step 5): account-setup errors that no wait will fix (for example a seat type without usage, usage disabled by an admin, a plan that does not include the CLI, a model that requires credits), and spend-cap, out-of-credits and spend-limit messages that give no reset time. These need money or account changes only the human can make.
+   - If one run's output shows several, a message with a reset time wins (it will clear by itself), then an escalation, then a plain usage limit.
 2. **Comment once.** Post one comment on the control issue: which agent hit the limit, the reset time if known, and the marker `<!-- huddle:usage-wait role=dev|pm -->`. Do not post again for retries within the same wait. Keep the `*-working` label during the wait (the turn is not over), and print the wait on the terminal.
 3. **Wait.** If the CLI printed a reset time, sleep until then plus one minute. Otherwise (or if the time cannot be parsed or is in the past) retry every 15 minutes.
-4. **Resume.** Run the same agent again, resuming its session, with the normal launch prompt. If it hits the limit again, keep waiting without a new comment. Once a run gets past the limit, continue as in 8.2 step 5.
+4. **Resume.** Run the same agent again, resuming its session, with the normal launch prompt. If it hits the limit again, keep waiting without a new comment. Once a run gets past the limit, continue as in 8.2 step 5. If a retry shows an escalation message instead, escalate (step 5).
+5. **Escalate.** Post one comment on the control issue: which agent was stopped, the CLI's exact message as the reason, that only the human can fix it, and the marker `<!-- huddle:escalate role=dev|pm -->`. Then set `state:human-required` (which removes the `*-working` label) and carry on as in 8.1: print the comment, keep polling. Keep the agent's session; when the human sets a ready label again, that agent resumes it. This is the "world on fire" case of the operating principles, and the only time Huddle itself sets `state:human-required`.
 
 **The real messages.** Find the exact usage-limit messages each installed CLI prints, from its docs or source (Codex is open source; for Claude Code use its docs, changelog and observed output), including how and in what format and time zone the reset time is given. Record them in the README. Match on those messages specifically, not on any output containing "limit", so a test failure that mentions limits is not mistaken for one.
 
@@ -365,8 +369,8 @@ Built for the earlier design. The runner (streaming, logging, tail capture, proc
 - Acceptance: tests with the fake for each operation, including no comments, no `state:*` label, several `state:*` labels (priority order), and an agent-set label next to a leftover `*-working` label.
 
 **3.5 Usage-limit detection**
-- Section 8.6: find each CLI's real usage-limit messages (docs or source) and record them in the README; write a detector that returns whether a run hit a usage limit and the reset time if the output gives one.
-- Acceptance: table-driven tests with fake outputs for each CLI: limit with a reset time, limit without one, a reset time in an unexpected format (detected, no time), normal output, and output that mentions "limit" in another context (not detected).
+- Section 8.6: find each CLI's real usage-limit messages (docs or source) and record them in the README; write a detector that returns whether a run hit a usage limit and the reset time if the output gives one, or whether it shows an account or credit error to escalate (with the CLI's exact message).
+- Acceptance: table-driven tests with fake outputs for each CLI: limit with a reset time, limit without one, a reset time in an unexpected format (detected, no time), an account or credit error (escalate, with its exact message), normal output, and output that mentions "limit" in another context (not detected).
 
 **3.6 Operating principles**
 - `internal/prompts`: embed `shared.md`, `dev.md`, `pm.md` exactly as in section 9; render the launch prompt for each role.
@@ -376,7 +380,7 @@ Built for the earlier design. The runner (streaming, logging, tail capture, proc
 
 **4.1 Watch loop**
 - `internal/loop`: section 8 in full: label dispatch, 30 s polling and the immediate re-read after a run, `*-working` labels, anti-stall, resume with fresh-session fallback, usage-limit wait (8.6), human-required printing, `done` printing the final report, interrupted-run recovery, Ctrl+C, `--once`. Runner, `gh`, sessions and clock behind interfaces.
-- Acceptance: tests with a fake runner, fake `gh` and fake clock cover: dev sets `pm-ready` → PM runs; PM sets `done` → report printed, exit 0; agent exits without changing the label → handoff comment with its final output and the other agent's ready label (for both roles, and for a non-zero exit); resume fails → fresh run of the same turn → session replaced; usage limit with a reset time → one wait comment, sleep until the reset, same agent resumed, no handoff; usage limit without a reset time → retries every 15 minutes with still only one comment; Ctrl+C during a usage wait → ready label restored; `human-required` → latest comment printed once, polling continues, a ready label resumes the loop; `dev-working` at startup → Codex resumed; no label → polling; Ctrl+C during a run → process killed, ready label restored; `--once` stops after one turn.
+- Acceptance: tests with a fake runner, fake `gh` and fake clock cover: dev sets `pm-ready` → PM runs; PM sets `done` → report printed, exit 0; agent exits without changing the label → handoff comment with its final output and the other agent's ready label (for both roles, and for a non-zero exit); resume fails → fresh run of the same turn → session replaced; usage limit with a reset time → one wait comment, sleep until the reset, same agent resumed, no handoff; usage limit without a reset time → retries every 15 minutes with still only one comment; account or credit error → one escalate comment with the CLI's exact message, `state:human-required`, session kept, no handoff; Ctrl+C during a usage wait → ready label restored; `human-required` → latest comment printed once, polling continues, a ready label resumes the loop; `dev-working` at startup → Codex resumed; no label → polling; Ctrl+C during a run → process killed, ready label restored; `--once` stops after one turn.
 
 **4.2 Wiring and cleanup**
 - Connect the startup checks to the loop in `main.go`. Remove what the new design dropped: the clean-tree check (startup check and `CheckCleanTree`), the `verdict` package, any facts, turn-limit or merge code, and the old preamble plans.
