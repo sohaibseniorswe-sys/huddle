@@ -1,8 +1,8 @@
 # Huddle
 
-Huddle lets two AI coding agents work through a GitHub milestone in turns: Codex CLI as the Dev agent, Claude Code as the PM agent. The human steps in only when the agents escalate. The spec is [MVP_PLAN.md](MVP_PLAN.md).
+Huddle lets two AI coding agents complete a GitHub milestone from design to delivery in one go: Codex CLI as the Dev agent, Claude Code as the PM agent. The agents talk through a control issue: they post their own comments on it and set its `state:*` label at the end of each turn. Huddle watches the label and starts whichever agent's turn it is; it adds no limits, timeouts or restrictions. The human is involved only if the PM sets `state:human-required`. The spec is [MVP_PLAN.md](MVP_PLAN.md).
 
-**Status:** Milestone 2 (agent runner and hardcoded agent commands). The turn loop is not implemented yet. The full README (install, usage, labels, troubleshooting) comes in Milestone 5.4.
+**Status:** Milestone 2 is done. It was built for an earlier design (Huddle-owned control issue, PM verdict JSON, turn limits, 30-minute timeouts, restricted agent permissions). Milestones 3 and 4 switch the code to the new design described in the plan; until then, the "Agent runner" and "Agent commands" sections below describe the current, old-design code. The full README (install, usage, labels, troubleshooting) comes in Milestone 5.4.
 
 ## Build and run
 
@@ -18,7 +18,7 @@ cd ~/projects/huddle-sandbox && huddle --repo sohaibseniorswe-sys/huddle-sandbox
 |------|---------|
 | `--repo owner/name` | Target repo. Default `sohaibseniorswe-sys/palantir`. Use the sandbox for testing. |
 | `--yes` | Skip the `Continue? [Y/n]` prompt. |
-| `--once` | Run a single turn, then exit (no-op until the turn loop exists). |
+| `--once` | Run a single agent turn, then exit (no-op until the watch loop exists, Milestone 4). |
 | `--version` | Print the version. |
 
 ## Startup checks
@@ -27,7 +27,7 @@ Huddle runs these checks in order and stops at the first failure, printing the r
 
 1. Neither `OPENAI_API_KEY` nor `ANTHROPIC_API_KEY` is set.
 2. The current directory is in a git repo whose `origin` is the target repo on github.com.
-3. The working tree is clean, ignoring `Session.md`.
+3. The working tree is clean, ignoring `Session.md`. (Old design: removed in Milestone 4, so Huddle can resume an agent after an interrupted run.)
 4. `AGENTS.md` and `CLAUDE.md` exist. `Session.md` is created empty if it is missing.
 5. `gh` is logged in and can see the target repo.
 6. All Huddle labels exist on the target repo (missing ones are created; existing ones are left alone).
@@ -59,9 +59,13 @@ Notes:
 
 ## Agent runner
 
+> **Old design.** Milestone 3 removes the timeout: agent runs have no time limit. Process-group cleanup, logging and env stripping stay.
+
 `internal/runner` runs one agent at a time: in the repo root, with a timeout (30 minutes by default), with output streamed to the terminal and saved to `~/.huddle/logs/<timestamp>-turn<N>-<role>.log`, and with the last 50 lines kept for the control-issue comment. Each agent runs in its own process group, and the whole group gets `SIGKILL` when the run ends: on timeout, on Ctrl+C, and after a normal exit too, so nothing the agent started in the background outlives its turn. If a leftover process still holds the output pipes, the run waits up to 5 s for them before closing them. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are removed from the child environment even though startup already refuses to run with them set. A non-zero exit, a timeout or a cancel is reported in the result, not returned as an error.
 
 ## Agent commands
+
+> **Old design.** Milestone 3 replaces these commands: Codex runs with `sandbox_mode="danger-full-access"` and `approval_policy="never"`, Claude Code with `--dangerously-skip-permissions`, both without any allow or deny lists, and each resumes its previous session (MVP_PLAN.md, section 6). The flag findings below (`--full-auto` removed, `--strict-config`, prompts on stdin, the JSON envelope) still apply.
 
 Checked against the installed CLIs on 2026-10-12 with `codex exec --help`, `claude --help` and the Claude Code [permissions docs](https://code.claude.com/docs/en/permissions). Both commands are self-contained: neither depends on the user's CLI config for sandboxing or permissions.
 

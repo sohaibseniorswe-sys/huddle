@@ -3,18 +3,24 @@
 > **For Claude Code.** This file is the spec for the Huddle MVP. Work through it one milestone per session. At the end of each milestone: `go build ./...` and `go test ./...` must pass, then stop and summarise what you built, what you verified, and anything you were unsure about. Do not start work from a later milestone early. If something here is ambiguous or turns out to be wrong in practice (for example a CLI flag), stop and ask rather than guess.
 >
 > Optional first step: create the five milestones and their issues on GitHub from this file using `gh`, in `sohaibseniorswe-sys/huddle`.
+>
+> **Design change after Milestone 2.** Milestones 1 and 2 were built for an earlier design (Huddle-owned control issue, verdict JSON, turn limits, timeouts, restricted agents). From Milestone 3 on, this file describes the new design. Code from Milestones 1 and 2 that the new design no longer needs is removed in Milestones 3 and 4.
 
 ---
 
 ## 1. What Huddle is
 
-Huddle is a small Go program that lets two AI coding agents work through a GitHub milestone in turns, with the human stepping in only when the agents escalate.
+Huddle is a small Go program that lets two AI coding agents complete a GitHub milestone from design to delivery in one go, with no human involvement unless the world is on fire.
 
-- **Dev agent:** Codex CLI. Implements one issue per turn on a branch and opens a PR.
-- **PM agent:** Claude Code. Reviews what the Dev did, then decides: continue with a new prompt, the milestone is done, or a human is needed.
-- **Huddle:** keeps the schedule and the record. It never judges the agents' work. It runs one agent at a time, passes control between them, and moves the label on a single "control issue".
+- **Dev agent:** Codex CLI. Works through the whole milestone, issue after issue: branch, commit, push, open and merge PRs, close issues.
+- **PM agent:** Claude Code. Reads what the Dev reported, makes decisions, and hands the Dev a clear next prompt. Writes the final report when the milestone is done.
+- **Huddle:** starts the right agent when it is that agent's turn, and does nothing else. It never judges the agents' work.
 
-Planning is done before Huddle runs. The milestone, its issues, the control issue, `AGENTS.md`, `CLAUDE.md` and `Session.md` already exist in the target repo.
+The **control issue** is the channel between the agents. They read it, post their own comments on it, and set its `state:*` label themselves at the end of each turn. Huddle watches the label.
+
+**Philosophy.** Huddle adds no limits, no timeouts and no restrictions. Agents have full permissions. The target is a private repo, and everything can be reverted.
+
+Planning is done before Huddle runs. The milestone, its issues, the control issue and `AGENTS.md` already exist in the target repo.
 
 ## 2. Repositories
 
@@ -36,37 +42,24 @@ cd ~/projects/palantir && huddle
 ## 3. Hard constraints
 
 1. **No API billing, ever.** Refuse to start if `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` is set in the environment. Also remove both from the environment of every child process. Never add any fallback that uses an API key.
-2. **Huddle alone owns the control issue.** Only Huddle changes its `state:*` label and posts on it. Agents work in the work plane (branches, PRs, comments on work issues).
-3. **Never touch `main` directly.** Agents work on `agent/issue-<n>` branches. The human merges PRs.
-4. **One agent at a time.** Never run two agent processes concurrently.
-5. **Agent commands are hardcoded** (section 6). No config file in the MVP. The target repo is hardcoded to palantir, with `--repo` as the only override, for testing.
+2. **One agent at a time.** Never run two agent processes concurrently.
+3. **No limits.** No turn limits, no per-issue limits, no agent timeouts, no allow or deny lists. Huddle never stops the loop on its own; it stops only on `state:done` or Ctrl+C.
+4. **Agent commands are hardcoded** (section 6). No config file in the MVP. The target repo is hardcoded to palantir, with `--repo` as the only override, for testing.
 
 ## 4. Prerequisites in the target repo (not built by Huddle)
 
 These must exist in whichever repo Huddle targets: the sandbox (section 4b) and later palantir. Huddle checks for them at startup.
 
-- `AGENTS.md` (committed): rules for both agents, including:
-  - Dev works on branch `agent/issue-<n>`, one PR per issue, never pushes to `main`.
-  - Dev runs the tests before finishing.
-  - Both agents read `Session.md` at the start and update it at the end of every turn.
-  - The PM only edits `Session.md`. It never edits code, labels, or the control issue.
-- `CLAUDE.md` (committed): one line, `Read and follow AGENTS.md and Session.md.`
-- `Session.md`: **gitignored**, so both agents share one copy on disk regardless of the checked-out branch. Huddle creates it empty if missing.
-- `.gitignore` contains `Session.md`.
-- Exactly one open issue labelled `control` (in palantir this is #58). Its body contains:
+- `AGENTS.md` (committed): how to work in this repo (branching, tests, PRs, merging). The agents follow it "as they normally would"; it must not forbid what the Dev role needs (pushing branches, merging PRs, closing issues).
+- `CLAUDE.md` (committed): one line, `Read and follow AGENTS.md.` (plus `Session.md` if the repo uses it).
+- `Session.md` (optional, **gitignored**): shared scratch notes. Huddle creates it empty if missing, so it does not dirty the tree. The operating principles tell agents to read it "if present".
+- Exactly one open issue labelled `control` (in palantir this is #58), assigned to the milestone being worked on. Its body states the goal; there is no required format. Its comments become the full history of the run.
 
-  ```markdown
-  ## First Dev task
-  Target issue: #59
-  Prompt:
-  <the first prompt for the Dev agent>
-  ```
-
-- The control issue is assigned to the milestone being worked on.
+To start a run, set `state:dev-ready` on the control issue (or `state:pm-ready` to have the PM write the first Dev prompt).
 
 ## 4b. Sandbox repo
 
-`sohaibseniorswe-sys/huddle-sandbox` is a tiny, disposable Go repo set up exactly like palantir, so the full loop (including "CI runs") can be exercised without touching real work. It is created in issue 1.4, by the human or by Claude Code with the commands below.
+`sohaibseniorswe-sys/huddle-sandbox` is a tiny, disposable Go repo set up like palantir, so the full loop (including CI runs) can be exercised without touching real work. It was created in issue 1.4 with the commands below, and its agent files are updated for the new design in issue 4.3.
 
 **Create the repo and its code**
 
@@ -113,26 +106,24 @@ jobs:
 EOF
 ```
 
-**Add the agent files (same rules as palantir)**
+**Agent files (new design)**
 
 ```bash
 cat > AGENTS.md <<'EOF'
 # Agent rules
 
-## Working with Huddle
-- Dev: work on branch agent/issue-<n>, one PR per issue. Never push to main.
-- Dev: run `go test ./...` before finishing.
-- Both agents: read Session.md at the start of every turn and update it at the end.
-- PM: only edit Session.md. Never edit code, labels, or the control issue.
+- Work on a branch per issue (agent/issue-<n>), open a PR that closes the issue, and merge it once `go test ./...` and CI pass.
+- Run `go test ./...` before every push.
+- Keep main green.
+- Huddle and the control issue: follow the operating principles in your launch prompt.
 EOF
-echo "Read and follow AGENTS.md and Session.md." > CLAUDE.md
+echo "Read and follow AGENTS.md." > CLAUDE.md
 echo "Session.md" > .gitignore
-touch Session.md
 go test ./...
-git add -A && git commit -m "Sandbox setup" && git push
+git add -A && git commit -m "Sandbox agent files for the new Huddle design" && git push
 ```
 
-**Create the milestone, labels, work issues and control issue**
+**Milestone, labels, work issues and control issue**
 
 ```bash
 S=sohaibseniorswe-sys/huddle-sandbox
@@ -154,56 +145,52 @@ Acceptance: README has a Usage section covering both functions." \
 
 gh issue create --repo $S --milestone "Sandbox M1" --label control \
   --title "Sandbox Control" --body "## Goal
-Exercise the Huddle loop end to end on two small issues (#$I1, #$I2).
-
-## First Dev task
-Target issue: #$I1
-Prompt:
-Implement issue #$I1 exactly as described, including its acceptance criteria. Open a PR that closes #$I1."
+Complete milestone Sandbox M1 (#$I1, #$I2) end to end."
 ```
 
 To start a run, add `state:dev-ready` to the sandbox control issue.
 
 **Resetting the sandbox between runs**
 
-Close open PRs and delete `agent/*` branches, reopen the two work issues, remove all `state:*` labels from the control issue, and delete Huddle's comments on it (or simply close it and create a fresh control issue with the command above). If the sandbox gets too messy, delete and recreate it: `gh repo delete sohaibseniorswe-sys/huddle-sandbox --yes` (needs `gh auth refresh -s delete_repo` once).
+Revert merged changes on `main` (or reset it to the setup commit and force-push), close open PRs and delete `agent/*` branches, reopen the work issues, then close the control issue and create a fresh one with the command above. Delete Huddle's local session file for the old control issue (section 8.4). If the sandbox gets too messy, delete and recreate it: `gh repo delete sohaibseniorswe-sys/huddle-sandbox --yes` (needs `gh auth refresh -s delete_repo` once).
 
 ## 5. Labels
 
 Huddle creates these on the target repo if missing (idempotent):
 
-| Label | Meaning |
-|-------|---------|
-| `control` | Marks the control issue |
-| `state:dev-ready` | Waiting for the Dev agent |
-| `state:dev-working` | Dev agent running |
-| `state:pm-ready` | Waiting for the PM agent |
-| `state:pm-working` | PM agent running |
-| `state:human-required` | Waiting for the human |
-| `state:done` | Milestone finished |
+| Label | Set by | Meaning |
+|-------|--------|---------|
+| `control` | human | Marks the control issue |
+| `state:dev-ready` | agents (or human to start) | Codex's turn |
+| `state:dev-working` | Huddle | Codex is running (visibility only) |
+| `state:pm-ready` | agents (or human) | PM's turn |
+| `state:pm-working` | Huddle | PM is running (visibility only) |
+| `state:human-required` | PM | Waiting for the human |
+| `state:done` | PM | Milestone finished |
 
-The control issue has exactly one `state:*` label at a time. Setting a state removes any other `state:*` label.
+Agents set the label with `gh issue edit`. They may forget to remove the old one, so Huddle normalises: after each run it removes its own `*-working` label, and whenever it sets a label it removes all other `state:*` labels. If several non-working `state:*` labels are present when Huddle reads the issue, it takes the first in this order and removes the rest: `human-required`, `done`, `pm-ready`, `dev-ready`.
 
 ## 6. Agent commands (hardcoded)
 
 ```
-Dev:  codex exec --full-auto "<prompt>"
-PM:   claude -p "<prompt>" --output-format json --permission-mode acceptEdits \
-        --allowedTools "Bash(gh issue view:*)" "Bash(gh pr view:*)" \
-                       "Bash(gh pr diff:*)" "Bash(gh pr checks:*)"
+Dev, first run:  codex exec --strict-config --ignore-user-config \
+                   -c sandbox_mode="danger-full-access" -c approval_policy="never" -
+Dev, resume:     codex exec resume <session-id> ... -
+PM,  first run:  claude -p --output-format json --dangerously-skip-permissions
+PM,  resume:     claude -p --output-format json --dangerously-skip-permissions --resume <session-id>
 ```
 
-- Both run with the working directory set to the repo root.
-- These flags reflect the CLIs as known at design time. **In Milestone 2, verify every flag against `codex exec --help` and `claude --help`** for the installed versions, adjust if needed, and record the versions and final commands in `README.md`.
-- If a prompt is too long for a command-line argument, pass it on stdin if the CLI supports that.
-- With `--output-format json`, Claude Code wraps its answer in a JSON envelope. Huddle must first extract the answer text (the `result` field, verify the exact field name) and only then parse the verdict from that text.
+- Both run with the working directory set to the repo root, with the prompt on stdin.
+- No `--allowedTools`, `--disallowedTools`, `--add-dir`, `--permission-mode` or other allow and deny lists.
+- **Verify every flag in Milestone 3** against `codex exec --help`, `codex exec resume --help` and `claude --help` for the installed versions (in particular: which options `codex exec resume` accepts, whether it reads the prompt from stdin, and this Claude Code version's equivalent of `--dangerously-skip-permissions`). Record versions and final commands in `README.md`.
+- **Session ids.** Claude Code's JSON envelope has a `session_id` field. For Codex, find the documented way to get the id of the session `codex exec` just created (for example its header line or a `--json` event) and verify it. Never use "resume the last session" shortcuts: another Codex session in the same directory would be picked up.
+- **Final output.** Huddle needs each agent's final message for the anti-stall comment (section 8.3): Claude Code's envelope `result` field; for Codex, its last-message output option if one exists (verify), otherwise the tail of its output.
 
 ## 7. Startup sequence
 
 ```
 $ huddle
 ✔ git repo ~/projects/palantir, remote sohaibseniorswe-sys/palantir
-✔ working tree clean
 ✔ AGENTS.md, CLAUDE.md and Session.md present
 ✔ gh logged in, repo access ok, labels ready
 ✔ codex and claude installed with subscription logins, no API keys in env
@@ -211,111 +198,122 @@ $ huddle
 Continue? [Y/n]
 ```
 
-Checks run in this order. The billing guard runs first, so nothing touches git, `gh` or the agent CLIs while an API key is set.
+As built in Milestone 1, minus the clean-tree check, which is removed completely: after an interrupted run the tree is normally dirty, and Huddle must be able to resume the agent (section 8.1). Checks run in this order. The billing guard runs first, so nothing touches git, `gh` or the agent CLIs while an API key is set.
 
 1. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are not set (even to an empty value).
 2. Current directory is inside a git repo, and its `origin` remote is the target repo: `sohaibseniorswe-sys/palantir`, or the `--repo` value if given (accept HTTPS and SSH URL forms, with or without `.git`; the host must be `github.com`, so SSH host aliases are rejected). When `--repo` is used, print a clear line such as `target: sohaibseniorswe-sys/huddle-sandbox (override)`.
-3. Working tree is clean (`git status --porcelain` is empty, ignoring `Session.md`).
-4. `AGENTS.md` and `CLAUDE.md` exist; create an empty `Session.md` if missing.
-5. `gh auth status` succeeds; `gh repo view <target>` succeeds.
-6. Ensure all labels exist (this also proves write access).
-7. `codex` and `claude` are on `PATH` and logged in with a subscription: `codex login status` must report `Logged in using ChatGPT`, and `claude auth status --json` must report `authMethod: "claude.ai"` and `apiProvider: "firstParty"` (see README.md).
-8. Exactly one open issue has the `control` label. It must have a milestone.
-9. Print the summary and ask `Continue? [Y/n]`. A `--yes` flag skips the prompt.
+3. `AGENTS.md` and `CLAUDE.md` exist; create an empty `Session.md` if missing.
+4. `gh auth status` succeeds; `gh repo view <target>` succeeds.
+5. Ensure all labels exist (this also proves write access).
+6. `codex` and `claude` are on `PATH` and logged in with a subscription (see README.md).
+7. Exactly one open issue has the `control` label. It must have a milestone.
+8. Print the summary and ask `Continue? [Y/n]`. A `--yes` flag skips the prompt.
 
 Any failed check prints a clear reason and exits non-zero.
 
-## 8. The turn loop
+## 8. The watch loop
 
-Huddle reads the control issue's `state:*` label and acts on it, repeating until it reaches `done`.
+### 8.1 What Huddle does for each label
 
-| Label at loop start | Action |
-|---------------------|--------|
-| `state:dev-ready` | Run a Dev turn |
-| `state:pm-ready` | Run a PM turn |
-| `state:human-required` | Print the reason, then poll every 60 s until the human changes the label |
-| `state:done` | Print "milestone done" and exit 0 |
-| `state:dev-working` or `state:pm-working` | A previous run was interrupted. Set `state:human-required` with the note "previous run interrupted", then continue the loop |
-| No `state:*` label | Print "add state:dev-ready to start" and poll every 60 s |
+Huddle reads the control issue's `state:*` label (normalised, section 5) every 30 seconds, and immediately after an agent exits.
 
-### Dev turn
+| Label | Action |
+|-------|--------|
+| `state:dev-ready` | Run a Dev turn (8.2) |
+| `state:pm-ready` | Run a PM turn (8.2) |
+| `state:human-required` | Print the latest comment on the control issue (once per change), then keep polling until a ready label is set |
+| `state:done` | Print the PM's final report (the latest comment on the control issue) and exit 0 |
+| `state:dev-working` / `state:pm-working` | A previous Huddle run was interrupted. Treat it as `dev-ready` / `pm-ready` and start that agent again (resuming its session) |
+| no `state:*` label | Print "add state:dev-ready to start" once, then keep polling |
 
-1. Check the turn limit (below). If reached, set `state:human-required` ("turn limit reached").
-2. Check the working tree is clean. If not, set `state:human-required` ("working tree not clean before Dev turn").
-3. `git checkout main && git pull --ff-only`.
-4. Set `state:dev-working`.
-5. Build the prompt: the embedded Dev preamble, plus the latest PM prompt. The latest prompt is the newest Huddle comment containing a `<!-- huddle:prompt -->` block; if there is none yet, use the `## First Dev task` section of the control issue body.
-6. Run Codex with a 30-minute timeout. Stream its output to the terminal and save the full output to `~/.huddle/logs/<timestamp>-turn<N>-dev.log`.
-7. Post a comment on the control issue: turn number, exit code, whether it timed out, the branch now checked out, and the last 50 lines of output in a collapsed `<details>` block. Include the marker `<!-- huddle turn=N role=dev -->`.
-8. Set `state:pm-ready`. This happens whatever the Dev outcome: crashes and timeouts go to the PM too.
+### 8.2 A turn
 
-### PM turn
+1. Set `state:dev-working` or `state:pm-working`.
+2. Build the launch prompt (section 9).
+3. Run the agent (section 6), resuming its saved session if there is one. Stream output to the terminal and save it to `~/.huddle/logs/<timestamp>-turn<N>-<role>.log`, where N is a counter local to this Huddle process (used for log names only). No timeout.
+4. After it exits, kill its process group (as the runner already does), save its session id (8.4), remove Huddle's `*-working` label, and read the label again.
+5. If the agent set a label, go back to 8.1. If its output shows a usage limit, wait and resume (8.6). Otherwise apply anti-stall (8.3).
 
-1. Set `state:pm-working`.
-2. Collect facts:
-   - the Dev turn's exit code, timeout flag and output tail (from the previous comment or kept in memory),
-   - the current branch and `git log main..HEAD --oneline`,
-   - the PR for that branch, if any (`gh pr list --head <branch> --json number,url,state`), and its checks (`gh pr checks <n>`),
-   - open and closed issue counts in the control issue's milestone.
-3. Build the prompt: the embedded PM preamble, the facts, and the verdict instructions (section 9).
-4. Run Claude Code with a 30-minute timeout; log to `~/.huddle/logs/<timestamp>-turn<N>-pm.log`.
-5. Parse the verdict (section 9). If invalid, re-run the PM once with: "Your last reply did not contain a valid verdict. Reply with only the JSON verdict." If still invalid, set `state:human-required` ("PM verdict unreadable").
-6. Act on the verdict:
-   - `continue`: post a comment with the reason and the next prompt inside a `<!-- huddle:prompt -->` block (with the target issue), marker `<!-- huddle turn=N role=pm -->`, then set `state:dev-ready`.
-   - `done`: check the milestone has no open issues other than the control issue. If it does, set `state:human-required` ("PM said done but issues are open: #x, #y"). Otherwise post the reason, set `state:done`, and close the control issue.
-   - `human`: post the reason, set `state:human-required`.
+### 8.3 Anti-stall
 
-### Limits
+If an agent exits without setting a new `state:*` label (whatever its exit code), Huddle:
 
-- **Turn limit: 20** per control issue. Count = the number of Huddle comments with a `<!-- huddle turn=` marker on the control issue. No local state file is needed.
-- **Timeout: 30 minutes** per agent run. On timeout, kill the whole process group.
-- **Ctrl+C:** kill the running agent's process group, set `state:human-required` ("stopped by user"), exit.
-- **`--once`:** run a single turn, then exit. Used for the pilot.
+1. Posts a comment on the control issue with the agent's final output (section 6), its exit code, and the marker `<!-- huddle:auto-handoff role=dev|pm -->`.
+2. Hands the turn to the other agent: after Codex, set `state:pm-ready`; after the PM, set `state:dev-ready`.
 
-## 9. PM verdict
+Huddle never stops the loop on its own.
 
-The PM must end its reply with a JSON object:
+### 8.4 Sessions
 
-```json
-{
-  "verdict": "continue",
-  "target_issue": 60,
-  "next_prompt": "Implement ...",
-  "reason": "PR #71 meets the acceptance criteria for #59."
-}
+- Huddle keeps one session id per agent per control issue in `~/.huddle/sessions/<owner>_<repo>_<control-issue>.json` (`{"dev": "...", "pm": "..."}`), so sessions survive a restart of Huddle.
+- When an agent is started again, its saved session is resumed. **Fallback:** if a resumed run exits non-zero without setting a new label, Huddle forgets that session and immediately runs the same turn once more as a fresh session. Only if that run also leaves the label unchanged does anti-stall apply.
+- A fresh session's id replaces the saved one.
+
+### 8.5 Ctrl+C and `--once`
+
+- **Ctrl+C:** kill the running agent's process group, put back the ready label of the agent that was interrupted (so the next `huddle` resumes it), exit 130. This also applies while Huddle is waiting for a usage reset (8.6). While no agent is running, just exit.
+- **`--once`:** run a single turn (including its anti-stall, resume fallback or usage-limit wait), then exit. Used for the first sandbox runs.
+
+### 8.6 Usage limits
+
+A subscription usage limit is not a reason to hand the turn over: the other agent cannot finish the first one's work.
+
+1. **Detect.** After a run that left the label unchanged, check the agent's output (log, final message, and for Claude Code the JSON envelope) for that CLI's usage-limit message. The usage-limit check comes before the resume fallback and anti-stall: a limited run never forgets its session and never hands over.
+2. **Comment once.** Post one comment on the control issue: which agent hit the limit, the reset time if known, and the marker `<!-- huddle:usage-wait role=dev|pm -->`. Do not post again for retries within the same wait. Keep the `*-working` label during the wait (the turn is not over), and print the wait on the terminal.
+3. **Wait.** If the CLI printed a reset time, sleep until then plus one minute. Otherwise (or if the time cannot be parsed or is in the past) retry every 15 minutes.
+4. **Resume.** Run the same agent again, resuming its session, with the normal launch prompt. If it hits the limit again, keep waiting without a new comment. Once a run gets past the limit, continue as in 8.2 step 5.
+
+**The real messages.** Find the exact usage-limit messages each installed CLI prints, from its docs or source (Codex is open source; for Claude Code use its docs, changelog and observed output), including how and in what format and time zone the reset time is given. Record them in the README. Match on those messages specifically, not on any output containing "limit", so a test failure that mentions limits is not mistaken for one.
+
+## 9. Launch prompt
+
+Every launch, fresh or resumed, sends:
+
+```
+<shared section>
+
+<the agent's role section>
+
+It's your turn. Read control issue #N and continue.
 ```
 
-- `verdict` is one of `continue`, `done`, `human`.
-- `reason` is always required.
-- `target_issue` (integer) and `next_prompt` (non-empty) are required for `continue`.
+The sections are the operating principles below, embedded with `go:embed` **exactly as written**, as three files in `internal/prompts/`: `shared.md`, `dev.md`, `pm.md`. `{{milestone}}` and `{{control_issue}}` are filled with plain string replacement (not `text/template`). `N` is the control issue number.
 
-Parsing, in order:
+### Operating principles (embed exactly)
 
-1. Extract the answer text from Claude Code's JSON envelope.
-2. Find the **last** JSON object in the text (it may be inside a ```` ```json ```` fence or surrounded by prose) and validate it.
-3. Fallback: if there is no valid JSON, match the last non-empty line against `continue`, `done`, `human`, ignoring case, markdown and punctuation. `done` and `human` are accepted this way with reason "(no reason given)". A bare `continue` is invalid, because it has no prompt.
-4. Otherwise: invalid (triggers the single repair retry).
+```
+HOW HUDDLE WORKS
+You are one of two agents completing milestone "{{milestone}}" without the human. Huddle is the program that starts you; it does nothing else.
+- Control issue #{{control_issue}} is the shared channel. Its comments are the full history: every status update, question and decision.
+- Its label says whose turn it is: state:dev-ready (Codex), state:pm-ready (PM), state:human-required (the human), state:done (finished). Huddle watches the label and starts the right agent.
+- At the start of every turn, read: the control issue and all its comments, the milestone's issues (gh issue list --milestone "{{milestone}}" --state all), AGENTS.md, Session.md if present, and recent git history.
+- At the end of your turn, post one comment on the control issue, then set the label for whoever goes next. That comment is how the other agent knows what happened, so make it complete:
+    Status: Progress | Decision needed | Error | Completed
+    Done:   what you did (issues closed, PRs, key commits)
+    Open:   what is left, and any question or blocker
+    Next:   what should happen now
+- This is a private repo and everything can be reverted. The goal is to keep moving until the milestone is complete.
+```
 
-Write table-driven tests covering messy real-world outputs: fenced JSON, prose after the JSON, two JSON objects, trailing commas, wrong case, missing fields.
+```
+YOUR ROLE: DEV (Codex)
+Your job is to complete the whole milestone, issue after issue, until every issue is closed. Work the way AGENTS.md describes, as you normally would: branch, commit, push, open and merge PRs, close issues.
+Make reasonable decisions yourself and note any assumption in the issue or PR. Do not stop to ask for review, approval or confirmation.
+If something blocks one issue, leave a note on it and carry on with the rest. Hand over to the PM (state:pm-ready) only when you cannot make further progress on the milestone, or when everything is done, with all open questions and blockers in that one comment.
+Write good, tested code. Don't knowingly break main.
+```
 
-## 10. Prompt preambles
+```
+YOUR ROLE: PM (Claude Code)
+Your job is to keep the milestone moving so the human is never disturbed. You are not a gatekeeper.
+Read the latest Dev comment and the project state, decide, then post Codex a clear, actionable prompt and set state:dev-ready.
+Prefer a sensible decision over a question. If a choice can be changed later, make it, record it, and move on. Never add restrictions like "don't push" or "ask before committing".
+If an issue genuinely needs the human (for example, manual testing), tell Codex to leave it open with a note and finish everything else.
+When the Dev reports Completed, check the milestone. If every issue is closed, post a final report (what was built, the exact commands to run and test it, a suggested next milestone) and set state:done. If only human-only issues remain, post the same report, list exactly what the human must do, and set state:human-required.
+Set state:human-required at any other time only when the world is on fire: you need credentials, money or access only the human has, or you and the Dev have truly run out of ways forward.
+```
 
-Embed both with `go:embed` from `prompts/dev.md` and `prompts/pm.md`.
-
-**Dev preamble** (outline):
-- You are the Dev agent on `<target repo>`. Read `AGENTS.md` and `Session.md` first.
-- Your task is below. Work on branch `agent/issue-<target>` (create it, or check it out if it exists and continue the work there).
-- Commit, run the tests, push, and open or update a PR that references the issue.
-- Before finishing, update `Session.md` with what you did, what is left, and any questions.
-
-**PM preamble** (outline):
-- You are the PM for milestone "<milestone>". Read `AGENTS.md` and `Session.md` first.
-- Here are the facts from the last Dev turn. You may use the allowed read-only `gh` commands to inspect the PR, diff and checks.
-- Decide: should the Dev continue (same issue with fixes, or the next issue), is the milestone done, or does the human need to step in? Escalate to the human when requirements are unclear, the same problem has failed twice, or a decision is needed that is not in the issue.
-- Update `Session.md` with your decision and reasoning. Do not edit any other file.
-- End your reply with the JSON verdict (exact schema included in the prompt).
-
-## 11. Suggested code layout
+## 10. Code layout
 
 ```
 huddle/
@@ -324,12 +322,10 @@ huddle/
 │   ├── checks/               startup checks
 │   ├── gh/                   gh wrapper behind an interface (fakeable in tests)
 │   ├── gitx/                 git helpers
-│   ├── runner/               run an agent: timeout, process group, env stripping, logging
-│   ├── verdict/              envelope extraction, parsing, validation
-│   ├── loop/                 state machine and turns
-│   └── prompts/              go:embed templates
-├── prompts/dev.md
-├── prompts/pm.md
+│   ├── runner/               run an agent: process group, env stripping, logging; agent commands
+│   ├── session/              per-control-issue session ids on disk
+│   ├── loop/                 watch loop, turns, anti-stall
+│   └── prompts/              go:embed operating principles (shared.md, dev.md, pm.md)
 ├── README.md
 └── MVP_PLAN.md               this file
 ```
@@ -340,91 +336,79 @@ Shell out to `git`, `gh`, `codex` and `claude`. Prefer the standard library; avo
 
 ## Milestones
 
-Estimated total: **11 to 18 hours**, most of the uncertainty in Milestone 5.
+### Milestone 1: Skeleton and startup checks (done)
 
-### Milestone 1: Skeleton and startup checks (2–3 h)
+Built for the earlier design; kept as is. Startup checks, the API-key guard, `--repo`, `--yes`, `--version`, the `gh` wrapper with a fake, idempotent labels, the sandbox repo.
 
-**1.1 Project skeleton**
-- Go module, layout from section 11, `huddle --version`, `--yes`, `--once` flags (no-ops for now), and `--repo owner/name` (default `sohaibseniorswe-sys/palantir`).
-- Acceptance: `go build ./...` and `go test ./...` pass; `huddle --version` prints a version; `--repo` rejects values that are not `owner/name`.
+### Milestone 2: Agent runner (done)
 
-**1.2 Local repo checks**
-- Section 7 checks 2, 3 and 4. Remote URL parsing for HTTPS and SSH forms, compared against the target repo.
-- Acceptance: unit tests for URL parsing (at least 6 forms), for matching against both the default and an overridden target, and for the clean-tree check ignoring `Session.md`.
+Built for the earlier design. The runner (streaming, logging, tail capture, process-group cleanup, env stripping) is kept. Its timeout and the restricted agent commands are replaced in Milestone 3.
 
-**1.3 GitHub checks**
-- `gh` wrapper interface plus a fake for tests. Section 7 checks 5, 6 and 8. Idempotent label creation.
-- Acceptance: tests with the fake cover zero, one and several control issues, and a control issue without a milestone.
+### Milestone 3: Agent commands, sessions, control issue and prompts (2–3 h)
 
-**1.4 Sandbox repo**
-- Create `sohaibseniorswe-sys/huddle-sandbox` with the commands in section 4b (ask the human before running `gh repo create`, as it creates a repo on their account).
-- Acceptance: the sandbox exists with passing CI on `main`, two work issues and a control issue in milestone "Sandbox M1"; a local clone is at `~/projects/huddle-sandbox`.
+**3.1 Runner without limits**
+- Remove the runner's default timeout: an unset timeout means none. Keep streaming, logging, tail capture, process-group cleanup after every run and on cancel, and env stripping.
+- Acceptance: existing runner tests still pass, minus the timeout tests; a test shows a run with no timeout set is not killed early.
 
-**1.5 Billing guard and confirmation**
-- Section 7 checks 1, 7 and 9. Investigate each CLI's `--help` for a login-status command and report findings.
-- Acceptance: Huddle refuses to start when either API key variable is set (tested). Running `huddle --repo sohaibseniorswe-sys/huddle-sandbox` in the sandbox clone prints the startup summary and asks to continue.
+**3.2 Agent commands with full permissions and resume**
+- Replace the Dev and PM command builders with section 6: Codex with `danger-full-access` and `approval_policy="never"`, Claude Code with `--dangerously-skip-permissions` (or this version's equivalent). Remove `PMAllowedTools`, `PMDisallowedTools`, `--add-dir` and `GoCacheDirs`. Add a resume form of each command.
+- Extract the session id and the final message from each agent's output (section 6).
+- Verify every flag in `--help` for the installed versions; update the README's agent-command section (versions, final commands, how the session id and final message are obtained).
+- Acceptance: unit tests for both builders (fresh and resume) and for session-id and final-message extraction from recorded real output. The smoke test (`HUDDLE_SMOKE`) runs each CLI fresh, then resumes the same session and asks it to repeat a word from the first run.
 
-### Milestone 2: Agent runner (2–3 h)
+**3.3 Session store**
+- `internal/session`: load and save `{"dev": "...", "pm": "..."}` per `<owner>_<repo>_<control-issue>` under `~/.huddle/sessions/`, with forget. A missing or unreadable file means no sessions.
+- Acceptance: tests for round trip, missing file, corrupt file and forget.
 
-**2.1 Runner**
-- Run a command in a directory with a timeout; stream to terminal and log file; capture the last N lines; kill the whole process group on timeout or cancel; strip both API key variables from the child environment.
-- Acceptance: tests using a fake agent script cover normal exit, non-zero exit, timeout (process group killed), and env stripping (child cannot see the variables).
+**3.4 Control issue operations**
+- In the `gh` wrapper and its fake: read the control issue's labels, set a state (removing all other `state:*` labels), remove one label, read the latest comment, post a comment. Normalisation from section 5.
+- Acceptance: tests with the fake for each operation, including no comments, no `state:*` label, several `state:*` labels (priority order), and an agent-set label next to a leftover `*-working` label.
 
-**2.2 Hardcoded agent commands**
-- Dev and PM command builders from section 6. Verify every flag against the installed CLIs; update the commands if needed; record versions and final commands in `README.md`.
-- Acceptance: a manual smoke test runs each CLI once with a trivial prompt ("Reply with the word OK") from the sandbox clone, and the README documents the result.
+**3.5 Usage-limit detection**
+- Section 8.6: find each CLI's real usage-limit messages (docs or source) and record them in the README; write a detector that returns whether a run hit a usage limit and the reset time if the output gives one.
+- Acceptance: table-driven tests with fake outputs for each CLI: limit with a reset time, limit without one, a reset time in an unexpected format (detected, no time), normal output, and output that mentions "limit" in another context (not detected).
 
-### Milestone 3: Control issue and facts (1–2 h)
+**3.6 Operating principles**
+- `internal/prompts`: embed `shared.md`, `dev.md`, `pm.md` exactly as in section 9; render the launch prompt for each role.
+- Acceptance: golden-file tests for the rendered Dev and PM prompts; a test that the embedded text matches section 9 apart from the two placeholders and that no `{{` is left after rendering.
 
-**3.1 Control issue operations**
-- Set state (removing other `state:*` labels), post comments with markers, find the latest `huddle:prompt` block, read the first Dev task from the issue body, count turns from markers.
-- Acceptance: tests with the fake `gh` for each operation, including "no prompt comment yet" and malformed issue bodies.
+### Milestone 4: Watch loop and wiring (2–3 h)
 
-**3.2 Facts collector**
-- Branch, commits since `main`, PR for branch, PR checks, milestone open and closed issues.
-- Acceptance: tests with fakes, including "no PR yet" and "checks pending".
+**4.1 Watch loop**
+- `internal/loop`: section 8 in full: label dispatch, 30 s polling and the immediate re-read after a run, `*-working` labels, anti-stall, resume with fresh-session fallback, usage-limit wait (8.6), human-required printing, `done` printing the final report, interrupted-run recovery, Ctrl+C, `--once`. Runner, `gh`, sessions and clock behind interfaces.
+- Acceptance: tests with a fake runner, fake `gh` and fake clock cover: dev sets `pm-ready` → PM runs; PM sets `done` → report printed, exit 0; agent exits without changing the label → handoff comment with its final output and the other agent's ready label (for both roles, and for a non-zero exit); resume fails → fresh run of the same turn → session replaced; usage limit with a reset time → one wait comment, sleep until the reset, same agent resumed, no handoff; usage limit without a reset time → retries every 15 minutes with still only one comment; Ctrl+C during a usage wait → ready label restored; `human-required` → latest comment printed once, polling continues, a ready label resumes the loop; `dev-working` at startup → Codex resumed; no label → polling; Ctrl+C during a run → process killed, ready label restored; `--once` stops after one turn.
 
-### Milestone 4: Verdict and turn loop (2–3 h)
+**4.2 Wiring and cleanup**
+- Connect the startup checks to the loop in `main.go`. Remove what the new design dropped: the clean-tree check (startup check and `CheckCleanTree`), the `verdict` package, any facts, turn-limit or merge code, and the old preamble plans.
+- Update the README for the new design: usage, flags, labels and who sets them, the anti-stall rule, sessions, Ctrl+C.
+- Acceptance: `go build ./...`, `go test ./...` and `go vet ./...` pass; `grep` finds no `verdict`, `Timeout: 30`, `allowedTools` or `disallowedTools` left in the code.
 
-**4.1 Verdict parser**
-- Section 9, including envelope extraction and the table-driven tests listed there.
-- Acceptance: all listed messy-output cases have tests and pass.
-
-**4.2 Prompts**
-- Embedded preambles from section 10, rendered with milestone name, target issue, facts and verdict schema.
-- Acceptance: golden-file tests for rendered Dev and PM prompts.
-
-**4.3 State machine and loop**
-- Section 8 in full: Dev turn, PM turn, repair retry, `done` verification, interrupted-run detection, human-required polling, turn limit, Ctrl+C, `--once`.
-- Acceptance: tests with a fake runner and fake `gh` cover: dev → pm → continue → dev; pm `done` with open issues → human-required; invalid verdict twice → human-required; turn limit; interrupted run at startup; dirty tree before a Dev turn.
+**4.3 Sandbox ready for the new design**
+- Update the sandbox's `AGENTS.md` and `CLAUDE.md` and recreate its control issue as in section 4b. Reset `main` and the work issues if needed.
+- Acceptance: `huddle --repo sohaibseniorswe-sys/huddle-sandbox` in `~/projects/huddle-sandbox` passes all startup checks and waits for a label.
 
 ### Milestone 5: Sandbox runs, then pilot on palantir #58 (4–6 h)
 
 Everything in 5.1 and 5.2 runs against the sandbox with `--repo sohaibseniorswe-sys/huddle-sandbox`. Palantir is not touched until 5.3. Reset the sandbox (section 4b) between attempts as needed.
 
 **5.1 Single turns in the sandbox**
-- With `--once`, run one Dev turn, inspect the comment, PR and `Session.md`; then one PM turn, inspect the verdict comment. Fix what breaks.
+- With `--once`, run one Dev turn and inspect the control-issue comment, label, branches and PRs; then one PM turn and inspect its comment and label. Then exercise an anti-stall (post a control-issue comment asking the next agent to end its turn without changing the label) and a resume (run `--once` again for the same agent and check it continues its session). Fix what breaks.
 
 **5.2 Full loop in the sandbox**
-- Run unattended until the sandbox milestone reaches `done` (the human merges PRs as they arrive). Both sandbox issues must be completed, and at least one PM correction must occur. If the PM never requests a correction naturally, add an extra acceptance criterion to the open work issue mid-run to force one.
-- Acceptance: the sandbox control issue's history shows the full sequence listed in 5.3, with no manual copy-pasting and no API charges.
+- Run unattended from `state:dev-ready` until the sandbox milestone reaches `state:done`, with no human action in between.
+- Acceptance: both sandbox issues closed by merged PRs, CI green on `main`, the PM's final report on the control issue, no manual copy-pasting and no API charges.
 
 **5.3 Pilot on palantir #58**
-- Only after 5.2 passes: run `huddle` (no `--repo`) in `~/projects/palantir` on Control #58. The pilot passes when this sequence happens without manual copy-pasting and without API charges:
-  1. PM assigns a small task.
-  2. Codex creates a PR.
-  3. CI runs.
-  4. PM requests a correction.
-  5. Codex fixes it.
-  6. PM accepts.
-  7. Huddle records completion.
-- Acceptance: the sequence above is visible in the control issue's comment history; findings and fixes are written to `docs/PILOT.md`.
+- Only after 5.2 passes: run `huddle` (no `--repo`) in `~/projects/palantir` on Control #58, starting from `state:dev-ready`.
+- Acceptance: the milestone reaches `state:done` (or `state:human-required` with only human-only issues left) without manual copy-pasting and without API charges; the control issue's comment history shows the whole run; findings and fixes are written to `docs/PILOT.md`.
 
 **5.4 README**
-- Install, prerequisites (section 4), sandbox setup and reset (section 4b), usage, flags, what each label means, troubleshooting for everything hit during the sandbox runs and the pilot.
+- Install, prerequisites (section 4), sandbox setup and reset (section 4b), usage, flags, what each label means and who sets it, troubleshooting for everything hit during the sandbox runs and the pilot.
 
 ---
 
 ## Out of scope for the MVP
 
-Config files, a SQLite checkpoint, a lock file, background service, push notifications, a reviewer agent, multiple control issues, automatic merging, a separate GitHub account for agents. These are in the full design and come after the pilot passes.
+Config files, a SQLite checkpoint, a lock file, background service, push notifications, a reviewer agent, multiple control issues, a separate GitHub account for agents. These are in the full design and come after the pilot passes.
+
+Deliberately absent, not deferred: the clean-tree check, turn limits, per-issue limits, agent timeouts, permission allow and deny lists, PM verdict parsing, and any check by Huddle of the agents' work.
