@@ -35,7 +35,7 @@ echo '{"result":"OK"}'
 	var stream bytes.Buffer
 
 	res, err := Run(context.Background(), Spec{
-		Name: agent, Dir: dir, Stdin: "the prompt", LogPath: logPath, Stream: &stream, Timeout: 10 * time.Second,
+		Name: agent, Dir: dir, Stdin: "the prompt", LogPath: logPath, Stream: &stream,
 	})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -70,7 +70,7 @@ echo '{"result":"OK"}'
 
 func TestRunNonZeroExit(t *testing.T) {
 	agent := fakeAgent(t, "echo failing; exit 3\n")
-	res, err := Run(context.Background(), Spec{Name: agent, Dir: t.TempDir(), Timeout: 10 * time.Second})
+	res, err := Run(context.Background(), Spec{Name: agent, Dir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Run() error = %v, want nil (non-zero exit is a result)", err)
 	}
@@ -124,11 +124,25 @@ func TestRunTimeoutKillsProcessGroup(t *testing.T) {
 	assertAllDead(t, pidFile)
 }
 
+func TestRunNoTimeoutByDefault(t *testing.T) {
+	agent := fakeAgent(t, "sleep 2; echo finished\n")
+	res, err := Run(context.Background(), Spec{Name: agent, Dir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if res.ExitCode != 0 || res.TimedOut || res.Canceled {
+		t.Errorf("Run() = exit %d, timedOut %t, canceled %t; want 0, false, false", res.ExitCode, res.TimedOut, res.Canceled)
+	}
+	if res.Tail != "finished" {
+		t.Errorf("Tail = %q, want %q", res.Tail, "finished")
+	}
+}
+
 func TestRunCancelKillsProcessGroup(t *testing.T) {
 	agent, pidFile := groupAgent(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	time.AfterFunc(500*time.Millisecond, cancel)
-	res, err := Run(ctx, Spec{Name: agent, Dir: t.TempDir(), Timeout: time.Minute})
+	res, err := Run(ctx, Spec{Name: agent, Dir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
@@ -159,7 +173,7 @@ echo done
 exit 0
 `)
 			start := time.Now()
-			res, err := Run(context.Background(), Spec{Name: agent, Dir: t.TempDir(), Timeout: time.Minute})
+			res, err := Run(context.Background(), Spec{Name: agent, Dir: t.TempDir()})
 			if err != nil {
 				t.Fatalf("Run() error = %v", err)
 			}
@@ -238,7 +252,7 @@ done
 		{"explicit environment", []string{"OPENAI_API_KEY=a", "ANTHROPIC_API_KEY=b", "HUDDLE_TEST_KEEP=kept", "PATH=" + os.Getenv("PATH")}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			res, err := Run(context.Background(), Spec{Name: agent, Dir: t.TempDir(), Env: tt.env, Timeout: 10 * time.Second})
+			res, err := Run(context.Background(), Spec{Name: agent, Dir: t.TempDir(), Env: tt.env})
 			if err != nil {
 				t.Fatalf("Run() error = %v", err)
 			}
@@ -279,6 +293,32 @@ func TestTailWriter(t *testing.T) {
 			}
 			if got := tw.String(); got != tt.want {
 				t.Errorf("tail = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHeadWriter(t *testing.T) {
+	tests := []struct {
+		name   string
+		writes []string
+		max    int
+		want   string
+	}{
+		{"empty", nil, 3, ""},
+		{"fewer than max", []string{"a\nb\n"}, 3, "a\nb"},
+		{"more than max", []string{"1\n2\n3\n4\n5\n"}, 3, "1\n2\n3"},
+		{"split across writes", []string{"hel", "lo\nwor", "ld\nmore\nlines\n"}, 2, "hello\nworld"},
+		{"trailing partial line", []string{"1\npart"}, 3, "1\npart"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hw := &headWriter{max: tt.max}
+			for _, w := range tt.writes {
+				hw.Write([]byte(w))
+			}
+			if got := hw.String(); got != tt.want {
+				t.Errorf("head = %q, want %q", got, tt.want)
 			}
 		})
 	}

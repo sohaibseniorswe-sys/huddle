@@ -1,0 +1,30 @@
+OpenAI Codex v0.160.0
+--------
+workdir: /home/sweeng/projects/huddle-sandbox
+model: gpt-6.1-sol
+provider: openai
+approval: never
+sandbox: danger-full-access
+reasoning effort: none
+reasoning summaries: none
+session id: 01a132be-f0bc-7293-89cc-72f23dcb576c
+--------
+user
+Reply with only the word AGAIN.
+
+exec
+/bin/bash -lc 'cat Session.md' in /home/sweeng/projects/huddle-sandbox
+ succeeded in 0ms:
+2026-10-12: User requested an OK acknowledgment; replied OK.
+2026-10-12: Ran go test ./...; all tests passed (cached).
+2026-10-12: User asked to remember PELICAN and reply only OK.
+2026-10-12: User asked for the remembered word; replied PELICAN.
+
+exec
+/bin/bash -lc "printf '%s\\n' '2026-10-12: User requested the single-word reply AGAIN.' >> Session.md" in /home/sweeng/projects/huddle-sandbox
+ succeeded in 0ms:
+codex
+AGAIN
+tokens used
+8,421
+AGAIN

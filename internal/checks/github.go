@@ -13,7 +13,7 @@ import (
 const ControlLabel = "control"
 
 // StatePrefix is the prefix shared by all state labels.
-const StatePrefix = "state:"
+const StatePrefix = gh.StatePrefix
 
 // Labels are the labels Huddle needs on the target repo (MVP_PLAN.md section 5).
 var Labels = []gh.Label{

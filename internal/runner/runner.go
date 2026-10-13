@@ -1,5 +1,5 @@
-// Package runner runs an agent CLI with a timeout, process-group kill, env
-// stripping and logging.
+// Package runner runs an agent CLI with process-group kill, env stripping and
+// logging. Runs have no time limit unless the caller sets one.
 package runner
 
 import (
@@ -19,11 +19,12 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/checks"
 )
 
-// DefaultTimeout is the limit for one agent run (section 8 of the plan).
-const DefaultTimeout = 30 * time.Minute
-
 // DefaultTailLines is how many lines of output Result.Tail keeps.
 const DefaultTailLines = 50
+
+// HeadLines is how many lines of output Result.Head keeps (codex prints its
+// session id in a header at the start of its output).
+const HeadLines = 30
 
 // waitDelay bounds how long Run waits for output pipes to close after the
 // agent exits or is killed, in case a descendant still holds them. It is a
@@ -32,15 +33,15 @@ var waitDelay = 5 * time.Second
 
 // Spec describes one agent run.
 type Spec struct {
-	Name    string   // binary, looked up on PATH
-	Args    []string // arguments
-	Stdin   string   // passed on stdin; empty means no stdin
-	Dir     string   // working directory
-	Timeout time.Duration
-	LogPath string    // full output is written here; empty means no log file
-	Stream  io.Writer // live output, normally os.Stdout; nil means none
-	Tail    int       // lines kept in Result.Tail; 0 means DefaultTailLines
-	Env     []string  // base environment; nil means os.Environ()
+	Name    string        // binary, looked up on PATH
+	Args    []string      // arguments
+	Stdin   string        // passed on stdin; empty means no stdin
+	Dir     string        // working directory
+	Timeout time.Duration // 0 means no timeout; Huddle never sets one
+	LogPath string        // full output is written here; empty means no log file
+	Stream  io.Writer     // live output, normally os.Stdout; nil means none
+	Tail    int           // lines kept in Result.Tail; 0 means DefaultTailLines
+	Env     []string      // base environment; nil means os.Environ()
 }
 
 // Result is the outcome of a run that started.
@@ -49,6 +50,7 @@ type Result struct {
 	TimedOut bool   // killed because Spec.Timeout passed
 	Canceled bool   // killed because the parent context was canceled
 	Stdout   string // stdout only, in full (the PM's JSON envelope)
+	Head     string // first HeadLines lines of combined stdout and stderr
 	Tail     string // last Spec.Tail lines of combined stdout and stderr
 	Duration time.Duration
 }
@@ -57,10 +59,6 @@ type Result struct {
 // not as an error; the error is only for runs that could not start.
 // The whole process group is killed when the run ends, however it ends.
 func Run(ctx context.Context, spec Spec) (Result, error) {
-	timeout := spec.Timeout
-	if timeout <= 0 {
-		timeout = DefaultTimeout
-	}
 	tailN := spec.Tail
 	if tailN <= 0 {
 		tailN = DefaultTailLines
@@ -84,8 +82,9 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 		fmt.Fprintf(f, "# huddle: %s in %s at %s\n", commandLine(spec), spec.Dir, time.Now().Format(time.RFC3339))
 	}
 
+	head := &headWriter{max: HeadLines}
 	tail := &tailWriter{max: tailN}
-	writers := []io.Writer{tail}
+	writers := []io.Writer{head, tail}
 	if spec.Stream != nil {
 		writers = append(writers, spec.Stream)
 	}
@@ -95,7 +94,10 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 	combined := &lockedWriter{w: io.MultiWriter(writers...)}
 	var stdout bytes.Buffer
 
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	runCtx, cancel := ctx, context.CancelFunc(func() {})
+	if spec.Timeout > 0 {
+		runCtx, cancel = context.WithTimeout(ctx, spec.Timeout)
+	}
 	defer cancel()
 
 	cmd := exec.CommandContext(runCtx, spec.Name, spec.Args...)
@@ -126,6 +128,7 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 	res := Result{
 		ExitCode: cmd.ProcessState.ExitCode(),
 		Stdout:   stdout.String(),
+		Head:     head.String(),
 		Tail:     tail.String(),
 		Duration: time.Since(start),
 	}
@@ -213,6 +216,30 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 	defer l.mu.Unlock()
 	return l.w.Write(p)
 }
+
+// headWriter keeps the first max lines written to it.
+type headWriter struct {
+	max   int
+	lines int
+	buf   []byte
+}
+
+func (h *headWriter) Write(p []byte) (int, error) {
+	n := len(p)
+	for len(p) > 0 && h.lines < h.max {
+		i := bytes.IndexByte(p, '\n')
+		if i < 0 {
+			h.buf = append(h.buf, p...)
+			break
+		}
+		h.buf = append(h.buf, p[:i+1]...)
+		h.lines++
+		p = p[i+1:]
+	}
+	return n, nil
+}
+
+func (h *headWriter) String() string { return strings.TrimSuffix(string(h.buf), "\n") }
 
 // tailWriter keeps the last max lines written to it.
 type tailWriter struct {

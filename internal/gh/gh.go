@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Issue is the subset of a GitHub issue that Huddle uses.
@@ -16,6 +18,14 @@ type Issue struct {
 	Title     string
 	Milestone string // empty if the issue has no milestone
 	Labels    []string
+}
+
+// Comment is an issue comment.
+type Comment struct {
+	Author    string
+	Body      string
+	CreatedAt time.Time
+	URL       string
 }
 
 // Label is a GitHub label.
@@ -37,6 +47,15 @@ type Client interface {
 	CreateLabel(ctx context.Context, repo string, l Label) error
 	// ListOpenIssues returns the open issues on repo that carry label.
 	ListOpenIssues(ctx context.Context, repo, label string) ([]Issue, error)
+	// IssueLabels returns the names of the labels on issue number.
+	IssueLabels(ctx context.Context, repo string, number int) ([]string, error)
+	// EditLabels adds and removes labels on issue number in one call.
+	// Removing a label the issue does not have is not an error.
+	EditLabels(ctx context.Context, repo string, number int, add, remove []string) error
+	// Comments returns the comments on issue number, oldest first.
+	Comments(ctx context.Context, repo string, number int) ([]Comment, error)
+	// PostComment posts a comment on issue number.
+	PostComment(ctx context.Context, repo string, number int, body string) error
 }
 
 // CLI implements Client by shelling out to gh.
@@ -44,8 +63,15 @@ type CLI struct{}
 
 var _ Client = CLI{}
 
-func (CLI) run(ctx context.Context, args ...string) ([]byte, error) {
+func (c CLI) run(ctx context.Context, args ...string) ([]byte, error) {
+	return c.runStdin(ctx, "", args...)
+}
+
+func (CLI) runStdin(ctx context.Context, stdin string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "gh", args...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -98,6 +124,70 @@ func (c CLI) ListOpenIssues(ctx context.Context, repo, label string) ([]Issue, e
 		return nil, err
 	}
 	return parseIssues(out)
+}
+
+func (c CLI) IssueLabels(ctx context.Context, repo string, number int) ([]string, error) {
+	out, err := c.run(ctx, "issue", "view", strconv.Itoa(number), "--repo", repo, "--json", "labels")
+	if err != nil {
+		return nil, err
+	}
+	var raw struct{ Labels []struct{ Name string } }
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parse gh issue view output: %w", err)
+	}
+	names := make([]string, len(raw.Labels))
+	for i, l := range raw.Labels {
+		names[i] = l.Name
+	}
+	return names, nil
+}
+
+func (c CLI) EditLabels(ctx context.Context, repo string, number int, add, remove []string) error {
+	if len(add) == 0 && len(remove) == 0 {
+		return nil
+	}
+	args := []string{"issue", "edit", strconv.Itoa(number), "--repo", repo}
+	for _, l := range add {
+		args = append(args, "--add-label", l)
+	}
+	for _, l := range remove {
+		args = append(args, "--remove-label", l)
+	}
+	_, err := c.run(ctx, args...)
+	return err
+}
+
+func (c CLI) Comments(ctx context.Context, repo string, number int) ([]Comment, error) {
+	out, err := c.run(ctx, "issue", "view", strconv.Itoa(number), "--repo", repo, "--json", "comments")
+	if err != nil {
+		return nil, err
+	}
+	return parseComments(out)
+}
+
+func (c CLI) PostComment(ctx context.Context, repo string, number int, body string) error {
+	// The body goes on stdin, so its length and content never hit argv.
+	_, err := c.runStdin(ctx, body, "issue", "comment", strconv.Itoa(number), "--repo", repo, "--body-file", "-")
+	return err
+}
+
+func parseComments(data []byte) ([]Comment, error) {
+	var raw struct {
+		Comments []struct {
+			Author    struct{ Login string }
+			Body      string
+			CreatedAt time.Time
+			URL       string
+		}
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse gh issue view output: %w", err)
+	}
+	comments := make([]Comment, len(raw.Comments))
+	for i, r := range raw.Comments {
+		comments[i] = Comment{Author: r.Author.Login, Body: r.Body, CreatedAt: r.CreatedAt, URL: r.URL}
+	}
+	return comments, nil
 }
 
 func parseIssues(data []byte) ([]Issue, error) {

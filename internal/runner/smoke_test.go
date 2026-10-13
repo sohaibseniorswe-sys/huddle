@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,66 +9,71 @@ import (
 	"time"
 )
 
-// TestSmokeRealAgents runs the real codex and claude once each with a trivial
-// prompt, and codex once more running `go test ./...` inside its sandbox. It
-// uses subscription quota, so it only runs when HUDDLE_SMOKE is set
-// to the path of a clone of the target repo:
+// TestSmokeRealAgents runs each real CLI fresh, asking it to remember a word,
+// then resumes the same session and asks for the word back. It uses
+// subscription quota, so it only runs when HUDDLE_SMOKE is set to the path of
+// a clone of the target repo:
 //
-//	HUDDLE_SMOKE=~/projects/huddle-sandbox go test -run Smoke -v ./internal/runner
+//	HUDDLE_SMOKE=~/projects/huddle-sandbox go test -count=1 -run Smoke -v ./internal/runner
 func TestSmokeRealAgents(t *testing.T) {
 	dir := os.Getenv("HUDDLE_SMOKE")
 	if dir == "" {
 		t.Skip("set HUDDLE_SMOKE to a target repo clone to run the real agent CLIs")
 	}
-	const prompt = "Reply with the word OK"
-	const goTestPrompt = "Run `go test ./...` in this repository. If it passes, reply with only the word OK. " +
-		"If it fails, reply with FAIL followed by the error."
+	const (
+		word     = "PELICAN"
+		first    = "Remember the word " + word + ". Reply with only the word OK. Do not run any commands or edit any files."
+		followUp = "What word did I ask you to remember? Reply with only that word. Do not run any commands or edit any files."
+	)
 	logDir := t.TempDir()
-	caches, err := GoCacheDirs(dir)
-	if err != nil {
-		t.Fatal(err)
+
+	// run runs spec through the runner and returns its session id and final
+	// message, extracted the way Huddle does.
+	run := func(t *testing.T, name string, spec Spec, lastMsg string) (string, string) {
+		t.Helper()
+		spec.Stream = os.Stdout
+		spec.LogPath = filepath.Join(logDir, name+".log")
+		res, err := Run(context.Background(), spec)
+		if err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+		t.Logf("%s: exit=%d duration=%s", name, res.ExitCode, res.Duration.Round(time.Second))
+		if res.ExitCode != 0 {
+			t.Fatalf("%s failed; tail:\n%s", name, res.Tail)
+		}
+		if spec.Name == "codex" {
+			return CodexSessionID(res.Head), CodexFinalMessage(lastMsg, res)
+		}
+		env, err := ParseClaude(res.Stdout)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if env.IsError {
+			t.Fatalf("claude envelope reports an error: %s", res.Stdout)
+		}
+		return env.SessionID, ClaudeFinalMessage(res)
 	}
 
-	for _, tt := range []struct {
-		name string
-		spec Spec
-	}{
-		{"codex", Dev(dir, prompt, caches)},
-		{"codex go test", Dev(dir, goTestPrompt, caches)},
-		{"claude", PM(dir, prompt)},
-	} {
-		spec := tt.spec
-		t.Run(tt.name, func(t *testing.T) {
-			spec.Timeout = 5 * time.Minute
-			spec.Stream = os.Stdout
-			spec.LogPath = filepath.Join(logDir, strings.ReplaceAll(tt.name, " ", "-")+".log")
-			res, err := Run(context.Background(), spec)
-			if err != nil {
-				t.Fatalf("Run() error = %v", err)
-			}
-			t.Logf("exit=%d timed_out=%t duration=%s", res.ExitCode, res.TimedOut, res.Duration.Round(time.Second))
-			if res.ExitCode != 0 || res.TimedOut {
-				t.Fatalf("agent failed; tail:\n%s", res.Tail)
-			}
-			answer := res.Stdout
-			if spec.Name == "claude" {
-				var env struct {
-					Type    string `json:"type"`
-					IsError bool   `json:"is_error"`
-					Result  string `json:"result"`
-				}
-				if err := json.Unmarshal([]byte(res.Stdout), &env); err != nil {
-					t.Fatalf("claude stdout is not a JSON envelope: %v\n%s", err, res.Stdout)
-				}
-				if env.IsError {
-					t.Fatalf("claude envelope reports an error: %s", res.Stdout)
-				}
-				answer = env.Result
-				t.Logf("envelope type=%q result=%q", env.Type, env.Result)
-			}
-			if !strings.Contains(answer, "OK") || strings.Contains(answer, "FAIL") {
-				t.Errorf("answer does not contain OK:\n%s", answer)
-			}
-		})
-	}
+	t.Run("codex", func(t *testing.T) {
+		last := filepath.Join(logDir, "codex-last.txt")
+		id, msg := run(t, "codex-fresh", Dev(dir, first, "", last), last)
+		if id == "" || !strings.Contains(msg, "OK") {
+			t.Fatalf("fresh run: session id %q, final message %q", id, msg)
+		}
+		id2, msg := run(t, "codex-resume", Dev(dir, followUp, id, last), last)
+		if id2 != id || !strings.Contains(strings.ToUpper(msg), word) {
+			t.Errorf("resume: session id %q (want %q), final message %q (want %s)", id2, id, msg, word)
+		}
+	})
+
+	t.Run("claude", func(t *testing.T) {
+		id, msg := run(t, "claude-fresh", PM(dir, first, ""), "")
+		if id == "" || !strings.Contains(msg, "OK") {
+			t.Fatalf("fresh run: session id %q, final message %q", id, msg)
+		}
+		id2, msg := run(t, "claude-resume", PM(dir, followUp, id), "")
+		if id2 != id || !strings.Contains(strings.ToUpper(msg), word) {
+			t.Errorf("resume: session id %q (want %q), final message %q (want %s)", id2, id, msg, word)
+		}
+	})
 }

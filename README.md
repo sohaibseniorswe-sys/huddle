@@ -2,7 +2,7 @@
 
 Huddle lets two AI coding agents complete a GitHub milestone from design to delivery in one go: Codex CLI as the Dev agent, Claude Code as the PM agent. The agents talk through a control issue: they post their own comments on it and set its `state:*` label at the end of each turn. Huddle watches the label and starts whichever agent's turn it is; it adds no limits, timeouts or restrictions. The human is involved only if the PM sets `state:human-required`. The spec is [MVP_PLAN.md](MVP_PLAN.md).
 
-**Status:** Milestone 2 is done. It was built for an earlier design (Huddle-owned control issue, PM verdict JSON, turn limits, 30-minute timeouts, restricted agent permissions). Milestones 3 and 4 switch the code to the new design described in the plan; until then, the "Agent runner" and "Agent commands" sections below describe the current, old-design code. The full README (install, usage, labels, troubleshooting) comes in Milestone 5.4.
+**Status:** Milestone 3 is done: agent commands with full permissions and session resume, the session store, control-issue operations, usage-limit detection and the embedded operating principles. The watch loop that ties them together comes in Milestone 4; until then `huddle` runs the startup checks and exits. Milestone 1's startup checks still include the clean-tree check, which Milestone 4 removes. The full README (install, usage, labels, troubleshooting) comes in Milestone 5.4.
 
 ## Build and run
 
@@ -59,50 +59,117 @@ Notes:
 
 ## Agent runner
 
-> **Old design.** Milestone 3 removes the timeout: agent runs have no time limit. Process-group cleanup, logging and env stripping stay.
-
-`internal/runner` runs one agent at a time: in the repo root, with a timeout (30 minutes by default), with output streamed to the terminal and saved to `~/.huddle/logs/<timestamp>-turn<N>-<role>.log`, and with the last 50 lines kept for the control-issue comment. Each agent runs in its own process group, and the whole group gets `SIGKILL` when the run ends: on timeout, on Ctrl+C, and after a normal exit too, so nothing the agent started in the background outlives its turn. If a leftover process still holds the output pipes, the run waits up to 5 s for them before closing them. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are removed from the child environment even though startup already refuses to run with them set. A non-zero exit, a timeout or a cancel is reported in the result, not returned as an error.
+`internal/runner` runs one agent at a time: in the repo root, with no time limit, with output streamed to the terminal and saved to `~/.huddle/logs/<timestamp>-turn<N>-<role>.log`, and with the first 30 and last 50 lines kept (`Result.Head`, `Result.Tail`). Each agent runs in its own process group, and the whole group gets `SIGKILL` when the run ends: on Ctrl+C, and after a normal exit too, so nothing the agent started in the background outlives its turn. If a leftover process still holds the output pipes, the run waits up to 5 s for them before closing them. `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` are removed from the child environment even though startup already refuses to run with them set. A non-zero exit or a cancel is reported in the result, not returned as an error. `Spec.Timeout` still exists for tests; zero (the default, and all Huddle uses) means no timeout.
 
 ## Agent commands
 
-> **Old design.** Milestone 3 replaces these commands: Codex runs with `sandbox_mode="danger-full-access"` and `approval_policy="never"`, Claude Code with `--dangerously-skip-permissions`, both without any allow or deny lists, and each resumes its previous session (MVP_PLAN.md, section 6). The flag findings below (`--full-auto` removed, `--strict-config`, prompts on stdin, the JSON envelope) still apply.
+Checked on 2026-10-12 against `codex exec --help`, `codex exec resume --help` and `claude --help`, and by running each command (fresh and resumed) in the sandbox. Both agents run with full permissions and no allow or deny lists; both read the prompt from stdin.
 
-Checked against the installed CLIs on 2026-10-12 with `codex exec --help`, `claude --help` and the Claude Code [permissions docs](https://code.claude.com/docs/en/permissions). Both commands are self-contained: neither depends on the user's CLI config for sandboxing or permissions.
-
-| Agent | Version | Final command (prompt on stdin) |
-|-------|---------|---------------------------------|
-| Dev | `codex-cli 0.160.0` | `codex exec --strict-config --ignore-user-config -c sandbox_mode="workspace-write" -c approval_policy="never" -c sandbox_workspace_write.network_access=true --add-dir <GOMODCACHE> --add-dir <GOCACHE> -` |
-| PM | Claude Code `2.1.296` | `claude -p --output-format json --permission-mode dontAsk --allowedTools Read "Edit(/Session.md)" "Bash(git log *)" "Bash(git diff *)" "Bash(git status *)" "Bash(git show *)" "Bash(gh issue view *)" "Bash(gh issue list *)" "Bash(gh pr view *)" "Bash(gh pr list *)" "Bash(gh pr diff *)" "Bash(gh pr checks *)" --disallowedTools "Bash(git push *)" "Bash(gh pr merge *)" "Bash(gh issue edit *)" "Bash(gh label create *)"` |
+| Agent | Version | Fresh | Resume |
+|-------|---------|-------|--------|
+| Dev | `codex-cli 0.160.0` | `codex exec --strict-config --ignore-user-config -c sandbox_mode="danger-full-access" -c approval_policy="never" --output-last-message <file> -` | `codex exec resume --strict-config --ignore-user-config -c sandbox_mode="danger-full-access" -c approval_policy="never" --output-last-message <file> <session-id> -` |
+| PM | Claude Code `2.1.296` | `claude -p --output-format json --dangerously-skip-permissions` | `claude -p --output-format json --dangerously-skip-permissions --resume <session-id>` |
 
 ### Dev (Codex)
 
-- **`--full-auto` is gone** from codex 0.160.0 (`error: unexpected argument '--full-auto' found`). The settings it used to imply are now passed as `-c` config overrides: `sandbox_mode="workspace-write"`, `approval_policy="never"` (never ask, so an unattended turn cannot stall), and `sandbox_workspace_write.network_access=true`, which the Dev needs for `git push` and `gh pr create`.
-- **`--ignore-user-config`** skips `~/.codex/config.toml`, so a user's config cannot weaken or change the sandbox. Auth still comes from `CODEX_HOME`.
-- **`--strict-config`** makes codex reject unknown keys and bad values in `-c` overrides. Without it, a misspelt key is silently ignored. Each key and value above was checked this way: `-c bogus_key=1` fails with `unknown configuration field`, and `approval_policy="bogus"` fails with `expected one of untrusted, on-failure, on-request, granular, never`. All valid values pass.
-- **Go caches.** The workspace-write sandbox can write only the workdir, `/tmp` and `$TMPDIR`, so `go test` could not write the module or build cache. `runner.GoCacheDirs` asks `go env GOMODCACHE GOCACHE` for the paths (creating them if missing). They are passed as `--add-dir`, which the help describes as "Additional directories that should be writable alongside the primary workspace".
+- **Full access.** `-c sandbox_mode="danger-full-access"` and `-c approval_policy="never"`; the header of every run, fresh or resumed, confirms `approval: never` and `sandbox: danger-full-access`. These are `-c` overrides rather than `--sandbox` because `codex exec resume` has no `--sandbox` flag but does accept `-c`. `--dangerously-bypass-approvals-and-sandbox` would also work but was not needed.
+- **`--ignore-user-config`** skips `~/.codex/config.toml`, so a user's config cannot change the run. Auth still comes from `CODEX_HOME`. **`--strict-config`** makes codex reject a misspelt `-c` key or value instead of ignoring it.
+- **`codex exec resume`** accepts `--strict-config`, `--ignore-user-config`, `-c` and `--output-last-message`, placed after `resume` and before the session id. With `-` as the prompt it reads stdin (checked: it answered from the earlier turn's context). A resumed run keeps the same session id. A bad id fails fast: `Error: thread/resume: thread/resume failed: no rollout found for thread id <id> (code -32600)`, exit 1.
+- **Session id.** `codex exec` prints a header on stderr before it starts work, with a line `session id: <uuid>`, for fresh and resumed runs alike. Huddle reads it from the first lines of output (`runner.CodexSessionID`). `--json` would give the same id as the `thread_id` of the first `thread.started` event, but it turns the terminal stream into JSONL, so Huddle uses the header. `--last` is never used.
+- **Final message.** `--output-last-message <file>` ("Specifies file where the last message from the agent should be written"). Huddle reads that file (`runner.CodexFinalMessage`). If it is empty or missing it falls back to stdout, where `codex exec` prints only the final message, then to the output tail.
+- **Removed:** `workspace-write`, `sandbox_workspace_write.network_access` and the `--add-dir` Go cache directories, which the restricted sandbox needed.
 
 ### PM (Claude Code)
 
-- **`--permission-mode dontAsk`** replaces `acceptEdits`. It "auto-denies every call that would otherwise prompt". File reads in the working directory and other approval-free actions still run, as do tools matched by an allow rule. `acceptEdits` would have let the PM edit any file and run `mkdir`, `touch`, `mv` and `cp`.
-- **`Edit(/Session.md)`** is the only edit permission. Per the docs, `Edit` rules apply to every built-in file-editing tool, including Write. A path rule written for `Write(...)` is accepted but never consulted. A leading `/` anchors the path at the primary working directory for CLI rules, so only the repo root's `Session.md` matches.
-- **Bash rules** use the documented `Bash(cmd *)` form. The older `Bash(cmd:*)` form is equivalent. A trailing ` *` also matches the bare command (`git status`). Compound commands are split on `&&`, `;`, `|` and the like, and each part must match a rule on its own.
-- **`--disallowedTools`** explicitly denies `git push`, `gh pr merge`, `gh issue edit` and `gh label create`. `dontAsk` would refuse them anyway. The explicit deny also beats any allow rule the target repo's own `.claude/settings.json` might add, because deny is evaluated first at every settings level. Per the docs, a Bash deny rule matches the command as written, so it does not stop `git -C . push` or `sh -c 'git push'`. Those are still refused by `dontAsk`, because no allow rule matches them.
-- **Both prompts go on stdin**, never in argv. This avoids argument length limits (`codex exec -` reads stdin; `claude -p` with no prompt argument does too). It also matters because `--allowedTools` and `--disallowedTools` are variadic, so a prompt placed after them would be read as another rule.
-
-### Claude Code JSON envelope
-
-With `--output-format json`, stdout is a single JSON object. The answer text is the **`result`** field. Other useful fields: `"type": "result"`, `"subtype": "success"`, `"is_error": false`, and `permission_denials` (a list of refused tool calls). The envelope also includes `total_cost_usd` (about $0.05 for the smoke test). That is a notional list-price figure (`"costBasis": "list"`). The run used the claude.ai subscription login with no API key in the environment, so nothing was billed.
+- **`--dangerously-skip-permissions`** ("Bypass all permission checks") exists in 2.1.296 under that name. No `--permission-mode`, `--allowedTools`, `--disallowedTools` or `--add-dir`.
+- **`--resume <session-id>`** resumes by id; `--continue` (most recent conversation in the directory) is never used. A bad id prints `No conversation found with session ID: <id>` and exits 1.
+- **JSON envelope.** With `--output-format json`, stdout is a single JSON object (`runner.ParseClaude`). `session_id` is the session id (the same on resume); `result` is the final message; `is_error` and `subtype` report failures. `total_cost_usd` is a notional list-price figure (`"costBasis": "list"`); runs use the claude.ai subscription login with no API key in the environment, so nothing is billed.
 
 ### Smoke test
 
-`TestSmokeRealAgents` runs each real CLI through the runner with the prompt "Reply with the word OK". It also runs Codex once more with a prompt to run `go test ./...` inside its sandbox. It is skipped unless `HUDDLE_SMOKE` names a target clone:
+`TestSmokeRealAgents` runs each real CLI fresh with "Remember the word PELICAN. Reply with only the word OK.", then resumes the same session by its extracted id and asks for the word back. It is skipped unless `HUDDLE_SMOKE` names a target clone:
 
 ```bash
 HUDDLE_SMOKE=~/projects/huddle-sandbox go test -count=1 -run Smoke -v ./internal/runner
 ```
 
-Result on 2026-10-12 in `~/projects/huddle-sandbox`, with the commands above: all three passed.
+Result on 2026-10-12 in `~/projects/huddle-sandbox`: both passed. Codex: 8 s fresh, 7 s resumed, same session id, answered `OK` then `PELICAN`. Claude: 3 s fresh, 4 s resumed, same `session_id`, `result` `OK` then `PELICAN`.
 
-- Codex: exit 0 in 12 s, answered `OK`. Its header, with `~/.codex/config.toml` ignored, reported `approval: never` and `sandbox: workspace-write [workdir, /tmp, $TMPDIR, /home/sweeng/go/pkg/mod, /home/sweeng/.cache/go-build] (network access enabled)`. Following `AGENTS.md`, it read `Session.md` and appended a line to it, even for this trivial prompt.
-- Codex `go test`: exit 0 in 13 s. `go test ./...` passed inside the sandbox, and it answered `OK`.
-- Claude: exit 0 in 5 s, envelope `result` = `"OK"`, `is_error` false, `permission_denials` empty. This prompt uses no tools, so it shows that the flags parse, not that the rules behave as intended. The rules were checked against the docs only.
+The unit tests use recorded real output in `internal/runner/testdata/`.
+
+## Usage-limit messages
+
+Taken from the installed CLIs on 2026-10-12. Codex is open source and its strings were read from the installed binary; Claude Code's were read from its installed bundle, including the function that builds the message for each limit type and Claude Code's own list of limit-message prefixes. Neither limit has been hit in practice yet, so the exact output as printed by `codex exec` and `claude -p` is still unobserved. Huddle matches only the messages below, at the start of a line (optionally after an `ERROR:`, `Error:` or `API Error:` prefix), so test output that merely mentions a limit is not mistaken for one (`runner.CodexUsageLimit`, `runner.ClaudeUsageLimit`). Each message below has a test case in `internal/runner/usage_test.go`.
+
+A message without a reset time, or with one in any other format, still counts as a usage limit, with no time; the loop then retries every 15 minutes (section 8.6).
+
+### Codex (`codex-cli 0.160.0`)
+
+Codex uses a typographic apostrophe (U+2019) in most of these; a plain one is accepted too. The core messages are reassembled from string fragments in the binary, so the joins between fragments are inferred.
+
+**Usage limit** (`UsageLimitReachedError`, printed by `codex exec` as an error line). The ending is ` Try again at <time>.`, `, or try again at <time>.` / ` or try again at <time>.`, or ` Try again later.` when the reset time is unknown.
+
+| Variant | Message |
+|---------|---------|
+| Plain | `You’ve hit your usage limit. Try again at <time>.` |
+| Plus plan | `You’ve hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at <time>.` |
+| Pro upgrade | `You’ve hit your usage limit. Upgrade to Pro (https://chatgpt.com/explore/pro), visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at <time>.` |
+| Pro / credits | `You’ve hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at <time>.` |
+| Team / Business | `You’ve hit your usage limit. To get more access now, send a request to your admin or try again at <time>.` |
+| Model-specific limit | `You’ve hit your usage limit for <model>. Switch to another model now, or try again at <time>.` |
+
+`<time>` is in the machine's **local time zone**: `3:45 PM` if the reset is today, otherwise `Oct 13th, 2026 3:45 PM` (chrono formats `%-I:%M %p` and `%b %-d<st|nd|rd|th>, %Y %-I:%M %p`).
+
+**Workspace spend control** (no reset time):
+
+- `Your workspace is out of credits. Add credits to continue.`
+- `Your workspace is out of credits. Ask your workspace owner to refill in order to continue.`
+- `You hit your spend cap set in your workspace. Increase your spend cap to continue.`
+- `You hit your spend cap set by the owner of your workspace. Ask an owner to increase your spend cap to continue.`
+
+**Interactive (TUI) notices**, not expected from `codex exec` but matched in case they appear (no reset time):
+
+- `Usage limit reached. You’ve reached your usage limit. Increase your limits to continue using codex.`
+- `You’ve reached your workspace credit limit`
+- `You’re out of credits. Your workspace is out of credits. Add credits to continue using Codex.`
+
+**Not matched:** `Quota exceeded. Check your plan and billing details.` (API-key billing, which Huddle never uses), `To use Codex with your ChatGPT plan, upgrade to Plus: ...` (the plan does not include Codex at all; nothing resets), and `exceeded retry limit, last status: 429 ...` (transient rate limiting that codex retries itself).
+
+### Claude Code (`2.1.296`)
+
+In `-p --output-format json` mode the message is the envelope's `result` (with `is_error: true`); Huddle also checks the raw output. Messages are built as `You've hit your <limit>` followed by ` · `-separated parts: advice, the reset, and optionally ` · progress saved`.
+
+**Plan limits** (`You've hit your <limit> · resets <time>[ · progress saved]`):
+
+| Limit type | `<limit>` |
+|------------|-----------|
+| 5-hour (`five_hour`) | `session limit` |
+| Weekly (`seven_day`) | `weekly limit` |
+| Weekly Opus (`seven_day_opus`) | `Opus limit` |
+| Weekly Sonnet (`seven_day_sonnet`) | `Sonnet limit` (`weekly limit` on Pro and Enterprise plans) |
+| Weekly Fable (`seven_day_overage_included`) | `Fable limit` |
+| Other / unknown type | `usage limit`, or `limit` when usage credits are also exhausted |
+
+For example `You've hit your weekly limit · resets Oct 15, 10am (Europe/London)` or `You've hit your Opus limit · resets 9:30am (Europe/London)`. With no reset time, `You've hit your usage limit · contact your admin to increase it`.
+
+**Spend and credit limits.** The reset, if any, is given as ` · your <plan limit> resets <time>` or ` · resets <time>`:
+
+- `You've hit your monthly spend limit · raise it at <url>[ · your <limit> resets <time>]` (also `You've hit your monthly spend limit.`)
+- `You've hit your org's monthly spend limit · ...`, `You've hit your individual spend limit · ...`
+- `You've hit your individual usage limit[ · resets <time>]`, `You've hit your org's monthly usage limit[ · resets <time>]`
+- `You've hit your channel's monthly spend limit · an org owner or channel manager can raise it in the channel's Claude settings[ · ...]`, and the same with `channel's monthly usage limit`
+- `You've hit your team's shared budget · raise it at <url>[ · your <limit> resets <time>]`
+- `You've reached your Fable limit. Switch to another model to continue.`
+- `You're out of usage credits[ · resets <time>][ · progress saved]`, `You're out of extra usage`, `Your org is out of usage · add funds to continue` / `· contact your admin`
+- `Usage limit reached · limit resets <time>` (the wait notice)
+- The older format `Claude AI usage limit reached|<unix seconds>`
+
+`<time>` is `3pm` or `3:30pm` if the reset is within 24 hours (so a time already past today means tomorrow), otherwise `Oct 13, 3pm`, with the year added (`Jan 2, 2027, 3pm`) if it differs; the zone in parentheses is the user's IANA time zone.
+
+**Not matched:** `You've hit your fast limit · resets in <duration>` (a fast-mode cooldown; `-p` runs don't use fast mode), the warnings `You've used <n>% of your <limit> · ...` and `You're close to your ...`, and account-configuration errors that no wait will fix: `Your seat type doesn't include usage credits`, `This service is disabled for your org`, `Your usage allocation has been disabled by your admin`, `Your group's usage limit is set to $0`, `<model> requires usage credits.`
+
+## Sessions and the control issue
+
+- `internal/session` stores `{"dev": "...", "pm": "..."}` in `~/.huddle/sessions/<owner>_<repo>_<control-issue>.json`. A missing or unreadable file means no sessions; writes go through a temporary file and a rename.
+- `internal/gh` reads and sets the control issue's `state:*` label, removes a label, reads the latest comment and posts comments (bodies go to `gh issue comment --body-file -` on stdin). Reading the state normalises it: if several state labels are present, the first of `human-required`, `done`, `pm-ready`, `dev-ready`, `pm-working`, `dev-working` wins and every other `state:*` label is removed, so a label an agent set always beats a leftover `*-working` label. Setting a state removes every other `state:*` label in the same `gh issue edit`.
+- `internal/prompts` embeds `shared.md`, `dev.md` and `pm.md` (the operating principles from MVP_PLAN.md section 9, checked byte for byte by a test) and renders the launch prompt.

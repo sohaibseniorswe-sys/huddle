@@ -3,6 +3,7 @@ package gh
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestParseIssues(t *testing.T) {
@@ -27,5 +28,24 @@ func TestParseIssues(t *testing.T) {
 func TestParseIssuesInvalid(t *testing.T) {
 	if _, err := parseIssues([]byte("not json")); err == nil {
 		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestParseComments(t *testing.T) {
+	data := []byte(`{"comments":[
+	  {"id":"IC_1","author":{"login":"sohaibseniorswe-sys"},"authorAssociation":"OWNER","body":"Status: Progress\nDone: #1",
+	   "createdAt":"2026-10-12T09:00:00Z","url":"https://github.com/o/r/issues/3#issuecomment-1","viewerDidAuthor":true}
+	]}`)
+	got, err := parseComments(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Comment{{Author: "sohaibseniorswe-sys", Body: "Status: Progress\nDone: #1",
+		CreatedAt: time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC), URL: "https://github.com/o/r/issues/3#issuecomment-1"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("parseComments() = %+v, want %+v", got, want)
+	}
+	if got, err := parseComments([]byte(`{"comments":[]}`)); err != nil || len(got) != 0 {
+		t.Errorf("parseComments(empty) = %v, %v", got, err)
 	}
 }

@@ -1,67 +1,45 @@
 package runner
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"os/exec"
+	"regexp"
 	"strings"
 )
 
 // The agent commands are hardcoded (section 6 of the plan). Flags were checked
 // against codex-cli 0.160.0 and Claude Code 2.1.296; see README.md.
 //
-// Both prompts go on stdin: it avoids argument length limits, and for claude
-// it avoids the variadic --allowedTools/--disallowedTools swallowing a
-// trailing prompt argument.
+// Both agents run with full permissions and no allow or deny lists. Both
+// prompts go on stdin, which avoids argument length limits.
 
 // DevConfig are the codex config overrides for a Dev turn. They are passed
 // with -c so the command does not depend on ~/.codex/config.toml, which
 // --ignore-user-config skips entirely. --strict-config makes codex reject a
 // misspelt key or value instead of silently ignoring it.
 var DevConfig = []string{
-	`sandbox_mode="workspace-write"`,
+	`sandbox_mode="danger-full-access"`,
 	`approval_policy="never"`,
-	`sandbox_workspace_write.network_access=true`,
 }
 
-// PMAllowedTools are the only tools the PM may use beyond those that never
-// need approval. Under dontAsk anything else is denied. The Edit rule covers
-// every file-editing tool (Write included); "/" anchors it at the working
-// directory, so only the repo root's Session.md matches.
-var PMAllowedTools = []string{
-	"Read",
-	"Edit(/Session.md)",
-	"Bash(git log *)",
-	"Bash(git diff *)",
-	"Bash(git status *)",
-	"Bash(git show *)",
-	"Bash(gh issue view *)",
-	"Bash(gh issue list *)",
-	"Bash(gh pr view *)",
-	"Bash(gh pr list *)",
-	"Bash(gh pr diff *)",
-	"Bash(gh pr checks *)",
-}
-
-// PMDisallowedTools are denied explicitly. dontAsk already denies them, but
-// a deny rule also beats any allow rule from the target repo's settings.
-var PMDisallowedTools = []string{
-	"Bash(git push *)",
-	"Bash(gh pr merge *)",
-	"Bash(gh issue edit *)",
-	"Bash(gh label create *)",
-}
-
-// Dev returns the Spec for a Codex turn in dir. writable are extra
-// directories the sandbox may write to, normally GoCacheDirs. "-" reads the
-// prompt from stdin.
-func Dev(dir, prompt string, writable []string) Spec {
-	args := []string{"exec", "--strict-config", "--ignore-user-config"}
+// Dev returns the Spec for a Codex turn in dir. An empty sessionID starts a
+// fresh session; otherwise that session is resumed by id (never --last, which
+// could pick up another codex session in the same directory). codex writes its
+// final message to lastMessagePath. "-" reads the prompt from stdin.
+func Dev(dir, prompt, sessionID, lastMessagePath string) Spec {
+	args := []string{"exec"}
+	if sessionID != "" {
+		args = append(args, "resume")
+	}
+	args = append(args, "--strict-config", "--ignore-user-config")
 	for _, kv := range DevConfig {
 		args = append(args, "-c", kv)
 	}
-	for _, d := range writable {
-		args = append(args, "--add-dir", d)
+	args = append(args, "--output-last-message", lastMessagePath)
+	if sessionID != "" {
+		args = append(args, sessionID)
 	}
 	return Spec{
 		Name:  "codex",
@@ -71,39 +49,81 @@ func Dev(dir, prompt string, writable []string) Spec {
 	}
 }
 
-// GoCacheDirs returns Go's module and build caches as seen from dir, creating
-// them if missing, so the Dev sandbox can make them writable for go build
-// and go test.
-func GoCacheDirs(dir string) ([]string, error) {
-	cmd := exec.Command("go", "env", "GOMODCACHE", "GOCACHE")
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("go env GOMODCACHE GOCACHE: %w", err)
+// PM returns the Spec for a Claude Code turn in dir. An empty sessionID starts
+// a fresh session; otherwise that session is resumed by id. Its stdout is a
+// JSON envelope; see ParseClaude.
+func PM(dir, prompt, sessionID string) Spec {
+	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions"}
+	if sessionID != "" {
+		args = append(args, "--resume", sessionID)
 	}
-	var dirs []string
-	for _, d := range strings.Fields(string(out)) {
-		if d == "off" { // GOCACHE=off
-			continue
-		}
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			return nil, fmt.Errorf("create Go cache dir: %w", err)
-		}
-		dirs = append(dirs, d)
-	}
-	return dirs, nil
-}
-
-// PM returns the Spec for a Claude Code turn in dir. Its stdout is a JSON
-// envelope whose "result" field holds the answer text.
-func PM(dir, prompt string) Spec {
-	args := []string{"-p", "--output-format", "json", "--permission-mode", "dontAsk", "--allowedTools"}
-	args = append(args, PMAllowedTools...)
-	args = append(args, "--disallowedTools")
 	return Spec{
 		Name:  "claude",
-		Args:  append(args, PMDisallowedTools...),
+		Args:  args,
 		Stdin: prompt,
 		Dir:   dir,
 	}
+}
+
+// codexSessionRe matches the "session id: <uuid>" line of the header codex
+// exec prints (on stderr) before it starts work, for fresh and resumed runs.
+var codexSessionRe = regexp.MustCompile(`(?m)^session id: ([0-9A-Za-z-]+)\s*$`)
+
+// CodexSessionID returns the session id from codex exec output (Result.Head
+// is enough), or "" if there is none, for example when codex failed early.
+func CodexSessionID(output string) string {
+	if m := codexSessionRe.FindStringSubmatch(output); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
+// CodexFinalMessage returns codex's final message: the --output-last-message
+// file if it is non-empty, otherwise its stdout (where codex exec prints only
+// the final message), otherwise the tail of its output.
+func CodexFinalMessage(lastMessagePath string, res Result) string {
+	if data, err := os.ReadFile(lastMessagePath); err == nil {
+		if s := strings.TrimSpace(string(data)); s != "" {
+			return s
+		}
+	}
+	if s := strings.TrimSpace(res.Stdout); s != "" {
+		return s
+	}
+	return res.Tail
+}
+
+// ClaudeEnvelope is the part of Claude Code's --output-format json envelope
+// that Huddle uses.
+type ClaudeEnvelope struct {
+	Type      string `json:"type"`
+	Subtype   string `json:"subtype"`
+	IsError   bool   `json:"is_error"`
+	SessionID string `json:"session_id"`
+	Result    string `json:"result"`
+}
+
+// ParseClaude parses Claude Code's JSON envelope from its stdout. The
+// envelope is the last non-empty line, so any stray output before it is
+// ignored.
+func ParseClaude(stdout string) (ClaudeEnvelope, error) {
+	var env ClaudeEnvelope
+	lines := strings.Split(strings.TrimSpace(stdout), "\n")
+	last := strings.TrimSpace(lines[len(lines)-1])
+	if last == "" {
+		return env, errors.New("claude printed no JSON envelope")
+	}
+	if err := json.Unmarshal([]byte(last), &env); err != nil {
+		return env, fmt.Errorf("parse claude JSON envelope: %w", err)
+	}
+	return env, nil
+}
+
+// ClaudeFinalMessage returns the envelope's result field, or the tail of the
+// output if there is no usable envelope.
+func ClaudeFinalMessage(res Result) string {
+	if env, err := ParseClaude(res.Stdout); err == nil && strings.TrimSpace(env.Result) != "" {
+		return strings.TrimSpace(env.Result)
+	}
+	return res.Tail
 }

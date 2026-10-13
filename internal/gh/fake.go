@@ -9,13 +9,16 @@ import (
 // Fake is an in-memory Client for tests. The zero value is a logged-in user
 // with access to every repo, no labels and no issues.
 type Fake struct {
-	AuthErr   error
-	RepoErr   error
-	ListErr   error
-	CreateErr error
-	Labels    []string
-	Issues    []Issue
-	Created   []string // names of labels created, in order
+	AuthErr       error
+	RepoErr       error
+	ListErr       error
+	CreateErr     error
+	IssueErr      error // returned by the issue label and comment operations
+	Labels        []string
+	Issues        []Issue
+	IssueComments map[int][]Comment // comments per issue number, oldest first
+	Created       []string          // names of labels created, in order
+	Edits         int               // number of EditLabels calls that changed something
 }
 
 var _ Client = (*Fake)(nil)
@@ -54,4 +57,60 @@ func (f *Fake) ListOpenIssues(_ context.Context, _, label string) ([]Issue, erro
 		}
 	}
 	return out, nil
+}
+
+func (f *Fake) issue(number int) (*Issue, error) {
+	if f.IssueErr != nil {
+		return nil, f.IssueErr
+	}
+	for i := range f.Issues {
+		if f.Issues[i].Number == number {
+			return &f.Issues[i], nil
+		}
+	}
+	return nil, fmt.Errorf("issue #%d not found", number)
+}
+
+func (f *Fake) IssueLabels(_ context.Context, _ string, number int) ([]string, error) {
+	is, err := f.issue(number)
+	if err != nil {
+		return nil, err
+	}
+	return slices.Clone(is.Labels), nil
+}
+
+func (f *Fake) EditLabels(_ context.Context, _ string, number int, add, remove []string) error {
+	is, err := f.issue(number)
+	if err != nil {
+		return err
+	}
+	if len(add) == 0 && len(remove) == 0 {
+		return nil
+	}
+	is.Labels = slices.DeleteFunc(is.Labels, func(l string) bool { return slices.Contains(remove, l) })
+	for _, l := range add {
+		if !slices.Contains(is.Labels, l) {
+			is.Labels = append(is.Labels, l)
+		}
+	}
+	f.Edits++
+	return nil
+}
+
+func (f *Fake) Comments(_ context.Context, _ string, number int) ([]Comment, error) {
+	if _, err := f.issue(number); err != nil {
+		return nil, err
+	}
+	return slices.Clone(f.IssueComments[number]), nil
+}
+
+func (f *Fake) PostComment(_ context.Context, _ string, number int, body string) error {
+	if _, err := f.issue(number); err != nil {
+		return err
+	}
+	if f.IssueComments == nil {
+		f.IssueComments = map[int][]Comment{}
+	}
+	f.IssueComments[number] = append(f.IssueComments[number], Comment{Author: "huddle", Body: body})
+	return nil
 }
