@@ -74,13 +74,6 @@ func (m Model) checkFolder(path string) tea.Cmd {
 		if path == "" {
 			return folderMsg{err: errors.New("type the folder of the project's git clone")}
 		}
-		info, err := os.Stat(path)
-		if err != nil {
-			return folderMsg{err: err}
-		}
-		if !info.IsDir() {
-			return folderMsg{err: fmt.Errorf("%s is not a folder", path)}
-		}
 		dir, err := deps.TopLevel(ctx, path)
 		if err != nil {
 			return folderMsg{err: fmt.Errorf("%s is not inside a git repo", path)}

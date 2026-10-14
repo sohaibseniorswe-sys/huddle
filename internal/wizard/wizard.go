@@ -21,6 +21,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -167,6 +168,9 @@ func New(deps Deps, c config.Config) Model {
 	m.spinner = spinner.New(spinner.WithSpinner(spinner.Dot))
 	m.folder = textinput.New()
 	m.folder.Prompt = ""
+	// A cursor that does not blink: blinking needs a timer message
+	// several times a second, for nothing a setup screen needs.
+	m.folder.Cursor.SetMode(cursor.CursorStatic)
 	m.folder.SetValue(c.Dir)
 	m.folder.Focus()
 	m.roles[roleDev] = fromConfig(c.Agents.Dev)
@@ -210,6 +214,7 @@ func newCustomInput() textinput.Model {
 	t.Prompt = ""
 	t.Placeholder = "model name"
 	t.CharLimit = 100
+	t.Cursor.SetMode(cursor.CursorStatic)
 	return t
 }
 

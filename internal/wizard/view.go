@@ -41,7 +41,7 @@ func (m Model) View() string {
 	parts = append(parts, card)
 	frame := lipgloss.NewStyle().Width(m.width).Height(m.height - helpRows).MaxHeight(m.height - helpRows).
 		Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
-	return frame + "\n" + m.help()
+	return frame + "\n" + lipgloss.NewStyle().Width(m.width).Render(m.help())
 }
 
 // cardWidth is the card's width: 70 columns, or less in a narrow terminal.

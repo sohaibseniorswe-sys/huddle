@@ -1,0 +1,34 @@
+ HUDDLE SETUP  ~/projects/palantir                                                      step 7 of 9 
+                                                                                                    
+  ✓ 1  Project folder    ~/projects/palantir                                                        
+  ✓ 2  GitHub repo       sohaibseniorswe-sys/palantir   (gh: sohaibseniorswe-sys)                   
+  ✓ 3  Dev agent         Codex · GPT-6.1 Sol · effort medium                                        
+  ✓ 4  PM agent          Claude Code · Opus 5.5 · effort high                                       
+  ✓ 5  Companion         Claude Code · Sonnet 5.5 · effort medium                                   
+  ✓ 6  Logins            Codex: ChatGPT · Claude Code: claude.ai · no API keys                      
+  ▸ 7  Autonomy level                                                                               
+    8  Repo preparation                                                                             
+    9  Save                                                                                         
+                                                                                                    
+  ╭──────────────────────────────────────────────────────────────────────╮                          
+  │                                                                      │                          
+  │  How independently should the agents work?                           │                          
+  │                                                                      │                          
+  │  0 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━●━━━━━━━━━━━ 10                   │                          
+  │                                                                      │                          
+  │  8 · Autonomous                                                      │                          
+  │                                                                      │                          
+  │  Dev goes to the PM   only for conflicts between issues,             │                          
+  │                       requirement changes or real blockers           │                          
+  │                                                                      │                          
+  │  PM comes to you      only when the world is on fire:                │                          
+  │                       credentials, money, access, or no way          │                          
+  │                       forward                                        │                          
+  │                                                                      │                          
+  ╰──────────────────────────────────────────────────────────────────────╯                          
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+ ←/→ change  ·  enter confirm  ·  esc back                                                          

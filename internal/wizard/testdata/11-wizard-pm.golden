@@ -1,0 +1,34 @@
+ HUDDLE SETUP  ~/projects/palantir                                                      step 4 of 9 
+                                                                                                    
+  ✓ 1  Project folder    ~/projects/palantir                                                        
+  ✓ 2  GitHub repo       sohaibseniorswe-sys/palantir   (gh: sohaibseniorswe-sys)                   
+  ✓ 3  Dev agent         Codex · GPT-6.1 Sol · effort medium                                        
+  ▸ 4  PM agent                                                                                     
+    5  Companion                                                                                    
+    6  Logins                                                                                       
+    7  Autonomy level                                                                               
+    8  Repo preparation                                                                             
+    9  Save                                                                                         
+                                                                                                    
+  ╭──────────────────────────────────────────────────────────────────────╮                          
+  │                                                                      │                          
+  │  PM agent                                                            │                          
+  │                                                                      │                          
+  │    CLI       Claude Code   Codex                                     │                          
+  │                                                                      │                          
+  │  ▸ Model     Opus 5.5   Sonnet 5.5   Haiku 5.5   Fable 5.1           │                          
+  │  Custom…                                                             │                          
+  │                                                                      │                          
+  │    Effort    low   medium   high   xhigh   max                       │                          
+  │                                                                      │                          
+  │  Known models for Claude Code, or Custom… to type any model          │                          
+  │  name. Step 6 checks every choice with a short test run.             │                          
+  │  Either CLI can play either role; Codex as PM saves Claude           │                          
+  │  Code's limits.                                                      │                          
+  │                                                                      │                          
+  ╰──────────────────────────────────────────────────────────────────────╯                          
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+ ↑/↓ field  ·  ←/→ choose  ·  enter confirm  ·  esc back                                            

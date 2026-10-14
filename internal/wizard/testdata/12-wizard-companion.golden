@@ -1,0 +1,34 @@
+ HUDDLE SETUP  ~/projects/palantir                                                      step 5 of 9 
+                                                                                                    
+  ✓ 1  Project folder    ~/projects/palantir                                                        
+  ✓ 2  GitHub repo       sohaibseniorswe-sys/palantir   (gh: sohaibseniorswe-sys)                   
+  ✓ 3  Dev agent         Codex · GPT-6.1 Sol · effort medium                                        
+  ✓ 4  PM agent          Claude Code · Opus 5.5 · effort high                                       
+  ▸ 5  Companion                                                                                    
+    6  Logins                                                                                       
+    7  Autonomy level                                                                               
+    8  Repo preparation                                                                             
+    9  Save                                                                                         
+                                                                                                    
+  ╭──────────────────────────────────────────────────────────────────────╮                          
+  │                                                                      │                          
+  │  Companion                                                           │                          
+  │                                                                      │                          
+  │    Source    Same as PM   Choose separately                          │                          
+  │                                                                      │                          
+  │    CLI       Claude Code   Codex                                     │                          
+  │                                                                      │                          
+  │    Model     Opus 5.5   Sonnet 5.5   Haiku 5.5   Fable 5.1           │                          
+  │  Custom…                                                             │                          
+  │                                                                      │                          
+  │  ▸ Effort    low   medium   high   xhigh   max                       │                          
+  │                                                                      │                          
+  │  The companion only talks and reads, so a lighter model              │                          
+  │  answers faster and saves the PM's limits.                           │                          
+  │                                                                      │                          
+  ╰──────────────────────────────────────────────────────────────────────╯                          
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+ ↑/↓ field  ·  ←/→ choose  ·  enter confirm  ·  esc back                                            
