@@ -60,7 +60,7 @@ func (f *Fake) ListOpenIssues(_ context.Context, _, label string) ([]Issue, erro
 	}
 	var out []Issue
 	for _, is := range f.Issues {
-		if slices.Contains(is.Labels, label) {
+		if !is.Closed && slices.Contains(is.Labels, label) {
 			out = append(out, is)
 		}
 	}
@@ -79,12 +79,12 @@ func (f *Fake) issue(number int) (*Issue, error) {
 	return nil, fmt.Errorf("issue #%d not found", number)
 }
 
-func (f *Fake) IssueLabels(_ context.Context, _ string, number int) ([]string, error) {
+func (f *Fake) IssueView(_ context.Context, _ string, number int) (Issue, error) {
 	is, err := f.issue(number)
 	if err != nil {
-		return nil, err
+		return Issue{}, err
 	}
-	return slices.Clone(is.Labels), nil
+	return Issue{Number: is.Number, Labels: slices.Clone(is.Labels), Closed: is.Closed}, nil
 }
 
 func (f *Fake) EditLabels(_ context.Context, _ string, number int, add, remove []string) error {

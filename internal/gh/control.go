@@ -20,6 +20,11 @@ const (
 	StateDone          = "state:done"
 )
 
+// StateClosed is not a label. Control.State returns it when the control
+// issue is closed, whatever its labels say. A closed control issue means
+// the milestone is finished, exactly like state:done.
+const StateClosed = "closed"
+
 // statePriority decides between several state labels on the control issue.
 // Agents may set a new label without removing the old one, so any label an
 // agent or the human sets beats a leftover *-working label set by Huddle.
@@ -42,12 +47,17 @@ type Control struct {
 // State reads the control issue's state label and normalises it: if several
 // known state labels are present, the first in priority order wins and every
 // other state:* label is removed. It returns "" if there is no known state
-// label (unknown state:* labels are then left alone).
+// label (unknown state:* labels are then left alone). If the issue is
+// closed it returns StateClosed and changes nothing.
 func (c Control) State(ctx context.Context) (string, error) {
-	labels, err := c.Client.IssueLabels(ctx, c.Repo, c.Number)
+	is, err := c.Client.IssueView(ctx, c.Repo, c.Number)
 	if err != nil {
 		return "", fmt.Errorf("read labels on #%d: %w", c.Number, err)
 	}
+	if is.Closed {
+		return StateClosed, nil
+	}
+	labels := is.Labels
 	state := ""
 	for _, s := range statePriority {
 		if slices.ContainsFunc(labels, func(l string) bool { return strings.EqualFold(l, s) }) {
@@ -69,10 +79,11 @@ func (c Control) State(ctx context.Context) (string, error) {
 // SetState sets state on the control issue and removes every other state:*
 // label, in one edit.
 func (c Control) SetState(ctx context.Context, state string) error {
-	labels, err := c.Client.IssueLabels(ctx, c.Repo, c.Number)
+	is, err := c.Client.IssueView(ctx, c.Repo, c.Number)
 	if err != nil {
 		return fmt.Errorf("read labels on #%d: %w", c.Number, err)
 	}
+	labels := is.Labels
 	var add []string
 	if !slices.ContainsFunc(labels, func(l string) bool { return strings.EqualFold(l, state) }) {
 		add = []string{state}
@@ -85,10 +96,11 @@ func (c Control) SetState(ctx context.Context, state string) error {
 
 // RemoveLabel removes label from the control issue if it is there.
 func (c Control) RemoveLabel(ctx context.Context, label string) error {
-	labels, err := c.Client.IssueLabels(ctx, c.Repo, c.Number)
+	is, err := c.Client.IssueView(ctx, c.Repo, c.Number)
 	if err != nil {
 		return fmt.Errorf("read labels on #%d: %w", c.Number, err)
 	}
+	labels := is.Labels
 	i := slices.IndexFunc(labels, func(l string) bool { return strings.EqualFold(l, label) })
 	if i < 0 {
 		return nil

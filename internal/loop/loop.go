@@ -1,7 +1,7 @@
 // Package loop is Huddle's watch loop (MVP_PLAN.md section 8): it reads the
 // control issue's state label and starts whichever agent's turn it is. It
 // never judges the agents' work and never stops on its own; it stops only on
-// state:done, Ctrl+C or /quit (context cancel) or, with Once, after one turn.
+// state:done or a closed control issue, Ctrl+C or /quit (context cancel) or, with Once, after one turn.
 //
 // The loop does not print. It reports what it does to a Reporter: the run
 // screen shows the reports, and with --plain they are printed as v1 did.
@@ -109,7 +109,7 @@ func escalateMarker(role session.Role) string {
 // errInterrupted reports that ctx was canceled.
 var errInterrupted = errors.New("interrupted")
 
-// Run runs the loop until state:done (ExitOK), Ctrl+C (ExitInterrupted), or
+// Run runs the loop until state:done or a closed control issue (ExitOK), Ctrl+C (ExitInterrupted), or
 // the end of the first turn with Once (ExitOK).
 func (l *Loop) Run(ctx context.Context) int {
 	hintShown := false  // "add state:dev-ready" reported for the current no-label spell
@@ -160,9 +160,17 @@ func (l *Loop) Run(ctx context.Context) int {
 			}
 			continue // read the label again straight away
 
-		case gh.StateDone:
+		// Huddle's definition of done: the control issue has state:done,
+		// or it is closed, whatever its label. Both end the run the same
+		// way. Nothing else is checked: not the milestone's other issues,
+		// and not whether the GitHub milestone itself is closed.
+		case gh.StateDone, gh.StateClosed:
 			l.setStatus(PhaseDone, "", time.Time{})
-			l.printf("%s: the milestone is finished. Final report:", gh.StateDone)
+			if state == gh.StateClosed {
+				l.printf("control issue #%d is closed: the milestone is finished. Final report:", l.Control.Number)
+			} else {
+				l.printf("%s: the milestone is finished. Final report:", gh.StateDone)
+			}
 			l.reportLatestComment(ctx)
 			return ExitOK
 
@@ -270,6 +278,10 @@ func (l *Loop) turnFor(ctx context.Context, role session.Role) error {
 		var state string
 		if err := l.retry(ctx, "read the label", func() (err error) { state, err = l.Control.State(ctx); return err }); err != nil {
 			return err
+		}
+		if state == gh.StateClosed {
+			l.printf("%s closed control issue #%d", l.roleName(role), l.Control.Number)
+			return nil
 		}
 		if state != working && state != "" {
 			l.printf("%s set %s", l.roleName(role), state)

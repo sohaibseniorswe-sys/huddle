@@ -57,6 +57,48 @@ func TestControlState(t *testing.T) {
 	}
 }
 
+func TestControlStateClosed(t *testing.T) {
+	for _, labels := range [][]string{
+		{"control"},
+		{"control", StateDone},
+		{"control", StateDevReady, StatePMReady},
+	} {
+		c, f := newControl(labels...)
+		f.Issues[0].Closed = true
+		got, err := c.State(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != StateClosed {
+			t.Errorf("State() with %v on a closed issue = %q, want %q", labels, got, StateClosed)
+		}
+		if !sameLabels(f.Issues[0].Labels, labels) {
+			t.Errorf("labels changed on a closed issue: %v", f.Issues[0].Labels)
+		}
+	}
+}
+
+func TestParseIssueView(t *testing.T) {
+	for _, tt := range []struct {
+		data   string
+		closed bool
+	}{
+		{`{"labels":[{"name":"control"},{"name":"state:done"}],"state":"CLOSED"}`, true},
+		{`{"labels":[{"name":"control"}],"state":"OPEN"}`, false},
+	} {
+		is, err := parseIssueView(3, []byte(tt.data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if is.Number != 3 || is.Closed != tt.closed || is.Labels[0] != "control" {
+			t.Errorf("parseIssueView(%s) = %+v", tt.data, is)
+		}
+	}
+	if _, err := parseIssueView(3, []byte("nope")); err == nil {
+		t.Error("want a parse error")
+	}
+}
+
 func TestControlSetState(t *testing.T) {
 	tests := []struct {
 		name   string

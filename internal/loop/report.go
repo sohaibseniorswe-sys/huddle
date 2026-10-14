@@ -31,7 +31,7 @@ const (
 	PhaseUsageWait              // Role hit a usage limit and waits until Until
 	PhasePaused                 // the human paused the loop; Role's turn is next
 	PhaseHuman                  // state:human-required: waiting for the human
-	PhaseDone                   // state:done: the milestone is finished
+	PhaseDone                   // state:done or the control issue closed: the milestone is finished
 )
 
 // Status is what the loop is doing right now.

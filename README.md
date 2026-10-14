@@ -110,7 +110,7 @@ There is no clean-tree check: after an interrupted run the tree is normally dirt
 
 ## The watch loop
 
-Once the checks pass, Huddle watches the control issue (`internal/loop`). It reads the issue's `state:*` label every 30 seconds while no agent is running (at once after `/resume` or an agreed decision), and straight after each agent exits. Only one Dev or PM agent runs at a time; the companion may run beside it. Huddle never stops on its own: the loop ends on `state:done` (status 0), on Ctrl+C or `/quit` (status 130), or after one turn with `--once`. On the run screen, Huddle then stays open until you quit; with `--plain` it exits.
+Once the checks pass, Huddle watches the control issue (`internal/loop`). It reads the issue's `state:*` label every 30 seconds while no agent is running (at once after `/resume` or an agreed decision), and straight after each agent exits. Only one Dev or PM agent runs at a time; the companion may run beside it. Huddle never stops on its own: the loop ends when the milestone is done: the control issue has `state:done` or is closed (status 0), on Ctrl+C or `/quit` (status 130), or after one turn with `--once`. On the run screen, Huddle then stays open until you quit; with `--plain` it exits.
 
 To start a run, add `state:dev-ready` to the control issue (or `state:pm-ready` to have the PM write the first Dev prompt).
 
@@ -124,7 +124,8 @@ To start a run, add `state:dev-ready` to the control issue (or `state:pm-ready` 
 | `state:pm-ready` | agents, or the human | Runs a PM turn. |
 | `state:pm-working` | Huddle, while the PM runs | As `dev-working`, for the PM. |
 | `state:human-required` | PM, or Huddle for account and credit errors | Prints the latest control-issue comment (once per new comment) and keeps polling until someone sets a ready label. |
-| `state:done` | PM | Prints the PM's final report (the latest comment) and exits 0. |
+| `state:done` | PM | Prints the PM's final report (the latest comment) and exits 0. The PM then closes the control issue. |
+| control issue closed | PM (or you) | The same as `state:done`, whatever the label says. Nothing else counts: open work issues or an open GitHub milestone do not matter. |
 | none | | Prints "add state:dev-ready to start" once and keeps polling. |
 
 Agents set labels with `gh issue edit --add-label` and may leave the old one in place, so Huddle normalises: if several state labels are present, the first of `human-required`, `done`, `pm-ready`, `dev-ready`, `pm-working`, `dev-working` wins and the others are removed. Whenever Huddle sets a label it removes every other `state:*` label.

@@ -18,6 +18,7 @@ type Issue struct {
 	Title     string
 	Milestone string // empty if the issue has no milestone
 	Labels    []string
+	Closed    bool // the issue is closed (only set by IssueView)
 }
 
 // Comment is an issue comment.
@@ -47,8 +48,9 @@ type Client interface {
 	CreateLabel(ctx context.Context, repo string, l Label) error
 	// ListOpenIssues returns the open issues on repo that carry label.
 	ListOpenIssues(ctx context.Context, repo, label string) ([]Issue, error)
-	// IssueLabels returns the names of the labels on issue number.
-	IssueLabels(ctx context.Context, repo string, number int) ([]string, error)
+	// IssueView returns issue number's labels and whether it is closed.
+	// Only Number, Labels and Closed are filled.
+	IssueView(ctx context.Context, repo string, number int) (Issue, error)
 	// EditLabels adds and removes labels on issue number in one call.
 	// Removing a label the issue does not have is not an error.
 	EditLabels(ctx context.Context, repo string, number int, add, remove []string) error
@@ -137,20 +139,29 @@ func (c CLI) ListOpenIssues(ctx context.Context, repo, label string) ([]Issue, e
 	return parseIssues(out)
 }
 
-func (c CLI) IssueLabels(ctx context.Context, repo string, number int) ([]string, error) {
-	out, err := c.run(ctx, "issue", "view", strconv.Itoa(number), "--repo", repo, "--json", "labels")
+func (c CLI) IssueView(ctx context.Context, repo string, number int) (Issue, error) {
+	out, err := c.run(ctx, "issue", "view", strconv.Itoa(number), "--repo", repo, "--json", "labels,state")
 	if err != nil {
-		return nil, err
+		return Issue{}, err
 	}
-	var raw struct{ Labels []struct{ Name string } }
-	if err := json.Unmarshal(out, &raw); err != nil {
-		return nil, fmt.Errorf("parse gh issue view output: %w", err)
+	return parseIssueView(number, out)
+}
+
+// parseIssueView reads `gh issue view --json labels,state` output. gh
+// prints the state as "OPEN" or "CLOSED".
+func parseIssueView(number int, data []byte) (Issue, error) {
+	var raw struct {
+		State  string
+		Labels []struct{ Name string }
 	}
-	names := make([]string, len(raw.Labels))
-	for i, l := range raw.Labels {
-		names[i] = l.Name
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return Issue{}, fmt.Errorf("parse gh issue view output: %w", err)
 	}
-	return names, nil
+	is := Issue{Number: number, Closed: strings.EqualFold(raw.State, "closed")}
+	for _, l := range raw.Labels {
+		is.Labels = append(is.Labels, l.Name)
+	}
+	return is, nil
 }
 
 func (c CLI) EditLabels(ctx context.Context, repo string, number int, add, remove []string) error {

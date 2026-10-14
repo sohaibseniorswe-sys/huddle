@@ -166,7 +166,7 @@ Huddle creates these on the target repo if missing (idempotent):
 | `state:pm-ready` | agents (or human) | PM's turn |
 | `state:pm-working` | Huddle | PM is running (visibility only) |
 | `state:human-required` | PM, or Huddle for account and credit errors (8.6) | Waiting for the human |
-| `state:done` | PM | Milestone finished |
+| `state:done` | PM | Milestone finished (the PM then closes the control issue; a closed control issue also means finished) |
 
 Agents set the label with `gh issue edit`. They may forget to remove the old one, so Huddle normalises: after each run it removes its own `*-working` label, and whenever it sets a label it removes all other `state:*` labels. If several non-working `state:*` labels are present when Huddle reads the issue, it takes the first in this order and removes the rest: `human-required`, `done`, `pm-ready`, `dev-ready`.
 
@@ -224,7 +224,7 @@ Huddle reads the control issue's `state:*` label (normalised, section 5) every 3
 | `state:dev-ready` | Run a Dev turn (8.2) |
 | `state:pm-ready` | Run a PM turn (8.2) |
 | `state:human-required` | Print the latest comment on the control issue (once per change), then keep polling until a ready label is set |
-| `state:done` | Print the PM's final report (the latest comment on the control issue) and exit 0 |
+| `state:done`, or the control issue is closed (whatever its label; since v3.4) | Print the PM's final report (the latest comment on the control issue) and exit 0. Nothing else is checked: not the milestone's other issues, not whether the GitHub milestone is closed |
 | `state:dev-working` / `state:pm-working` | A previous Huddle run was interrupted. Treat it as `dev-ready` / `pm-ready` and start that agent again (resuming its session) |
 | no `state:*` label | Print "add state:dev-ready to start" once, then keep polling |
 
@@ -293,6 +293,7 @@ You are one of two agents completing milestone "{{milestone}}" without the human
 - Control issue #{{control_issue}} is the shared channel. Its comments are the full history: every status update, question and decision.
 - Its label says whose turn it is: state:dev-ready (Dev), state:pm-ready (PM), state:human-required (the human), state:done (finished). Huddle watches the label and starts the right agent.
 - At the start of every turn, read: the control issue and all its comments, the milestone's issues (gh issue list --milestone "{{milestone}}" --state all), AGENTS.md, Session.md if present, and recent git history.
+- If the milestone's issues point to spec files in the repo, those files are the source of truth. Read the milestone's README first, then each issue's spec.
 - At the end of your turn, post one comment on the control issue, then set the label for whoever goes next. That comment is how the other agent knows what happened, so make it complete:
     Status: Progress | Decision needed | Error | Completed
     Done:   what you did (issues closed, PRs, key commits)
@@ -304,10 +305,11 @@ You are one of two agents completing milestone "{{milestone}}" without the human
 ```
 YOUR ROLE: DEV
 You are the Dev agent ({{agent}}).
-Your job is to complete the whole milestone, issue after issue, until every issue is closed. Work the way AGENTS.md describes, as you normally would: branch, commit, push, open and merge PRs, close issues.
+Your job is to complete every issue in the milestone except the control issue, issue after issue, until each one is closed. Work the way AGENTS.md describes, as you normally would: branch, commit, push, open and merge PRs, close issues.
 Make reasonable decisions yourself and note any assumption in the issue or PR. Do not stop to ask for review, approval or confirmation.
 If something blocks one issue, leave a note on it and carry on with the rest. Hand over to the PM (state:pm-ready) only when you cannot make further progress on the milestone, or when everything is done, with all open questions and blockers in that one comment.
 Write good, tested code. Don't knowingly break main.
+Never close the control issue; the PM does.
 ```
 
 ```
@@ -317,8 +319,9 @@ Your job is to keep the milestone moving so the human is never disturbed. You ar
 Read the latest Dev comment and the project state, decide, then post the Dev a clear, actionable prompt and set state:dev-ready.
 Read any `huddle:decision` comments posted since your last turn and act on them first.
 Prefer a sensible decision over a question. If a choice can be changed later, make it, record it, and move on. Never add restrictions like "don't push" or "ask before committing".
+Your comments state decisions, their reasons and the facts the Dev needs. Never tell the Dev how to work (whether to push, wait or ask for review): its autonomy level decides that.
 If an issue genuinely needs the human (for example, manual testing), tell the Dev to leave it open with a note and finish everything else.
-When the Dev reports Completed, check the milestone. If every issue is closed, post a final report (what was built, the exact commands to run and test it, a suggested next milestone) and set state:done. If only human-only issues remain, post the same report, list exactly what the human must do, and set state:human-required.
+When the Dev reports Completed, check the milestone. It is complete when every issue except the control issue is closed and the milestone README's Definition of Done and each issue's success criteria and evidence are met. Then post a final report (what was built, the exact commands to run and test it, a suggested next milestone), set state:done and close the control issue. If only human-only issues remain, post the same report, list exactly what the human must do, and set state:human-required.
 Set state:human-required at any other time only when the world is on fire: you need credentials, money or access only the human has, or you and the Dev have truly run out of ways forward.
 ```
 
