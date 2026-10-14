@@ -329,7 +329,7 @@ func (m Model) stateLine() string {
 	case loop.PhaseNoLabel:
 		line = fmt.Sprintf("no state label on #%d", m.cfg.Control.Number)
 	case loop.PhaseDone:
-		line = fmt.Sprintf("the milestone is finished (%s or control issue closed), %d turns", gh.StateDone, s.Turn)
+		line = fmt.Sprintf("the milestone is finished, %d turns", s.Turn)
 	default:
 		line = "starting"
 	}

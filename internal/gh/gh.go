@@ -18,7 +18,8 @@ type Issue struct {
 	Title     string
 	Milestone string // empty if the issue has no milestone
 	Labels    []string
-	Closed    bool // the issue is closed (only set by IssueView)
+	Body      string // set by ListIssues
+	Closed    bool   // set by ListIssues and IssueView
 }
 
 // Comment is an issue comment.
@@ -42,12 +43,20 @@ type Client interface {
 	AuthStatus(ctx context.Context) error
 	// RepoView succeeds if repo ("owner/name") exists and is accessible.
 	RepoView(ctx context.Context, repo string) error
+	// User returns the login of the account gh is signed in with.
+	User(ctx context.Context) (string, error)
+	// Permission returns the signed-in account's permission on repo:
+	// "ADMIN", "MAINTAIN", "WRITE", "TRIAGE" or "READ".
+	Permission(ctx context.Context, repo string) (string, error)
 	// ListLabels returns the names of all labels on repo.
 	ListLabels(ctx context.Context, repo string) ([]string, error)
 	// CreateLabel creates a label on repo.
 	CreateLabel(ctx context.Context, repo string, l Label) error
-	// ListOpenIssues returns the open issues on repo that carry label.
-	ListOpenIssues(ctx context.Context, repo, label string) ([]Issue, error)
+	// ListIssues returns repo's issues in state ("open" or "closed"),
+	// newest first, with their bodies.
+	ListIssues(ctx context.Context, repo, state string) ([]Issue, error)
+	// ReopenIssue reopens the closed issue number.
+	ReopenIssue(ctx context.Context, repo string, number int) error
 	// IssueView returns issue number's labels and whether it is closed.
 	// Only Number, Labels and Closed are filled.
 	IssueView(ctx context.Context, repo string, number int) (Issue, error)
@@ -108,6 +117,16 @@ func (c CLI) RepoView(ctx context.Context, repo string) error {
 	return err
 }
 
+func (c CLI) User(ctx context.Context) (string, error) {
+	out, err := c.run(ctx, "api", "user", "--jq", ".login")
+	return strings.TrimSpace(string(out)), err
+}
+
+func (c CLI) Permission(ctx context.Context, repo string) (string, error) {
+	out, err := c.run(ctx, "repo", "view", repo, "--json", "viewerPermission", "--jq", ".viewerPermission")
+	return strings.TrimSpace(string(out)), err
+}
+
 func (c CLI) ListLabels(ctx context.Context, repo string) ([]string, error) {
 	out, err := c.run(ctx, "label", "list", "--repo", repo, "--json", "name", "--limit", "1000")
 	if err != nil {
@@ -130,13 +149,23 @@ func (c CLI) CreateLabel(ctx context.Context, repo string, l Label) error {
 	return err
 }
 
-func (c CLI) ListOpenIssues(ctx context.Context, repo, label string) ([]Issue, error) {
-	out, err := c.run(ctx, "issue", "list", "--repo", repo, "--state", "open",
-		"--label", label, "--json", "number,title,milestone,labels", "--limit", "100")
+// listLimit is how many issues ListIssues reads: plenty for the open
+// issues of a private repo, and the newest closed ones are the ones that
+// matter.
+const listLimit = "200"
+
+func (c CLI) ListIssues(ctx context.Context, repo, state string) ([]Issue, error) {
+	out, err := c.run(ctx, "issue", "list", "--repo", repo, "--state", state,
+		"--json", "number,title,milestone,labels,body,state", "--limit", listLimit)
 	if err != nil {
 		return nil, err
 	}
 	return parseIssues(out)
+}
+
+func (c CLI) ReopenIssue(ctx context.Context, repo string, number int) error {
+	_, err := c.run(ctx, "issue", "reopen", strconv.Itoa(number), "--repo", repo)
+	return err
 }
 
 func (c CLI) IssueView(ctx context.Context, repo string, number int) (Issue, error) {
@@ -218,13 +247,15 @@ func parseIssues(data []byte) ([]Issue, error) {
 		Title     string
 		Milestone *struct{ Title string }
 		Labels    []struct{ Name string }
+		Body      string
+		State     string
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse gh issue list output: %w", err)
 	}
 	issues := make([]Issue, len(raw))
 	for i, r := range raw {
-		issues[i] = Issue{Number: r.Number, Title: r.Title}
+		issues[i] = Issue{Number: r.Number, Title: r.Title, Body: r.Body, Closed: strings.EqualFold(r.State, "closed")}
 		if r.Milestone != nil {
 			issues[i].Milestone = r.Milestone.Title
 		}

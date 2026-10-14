@@ -20,6 +20,7 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
+	"github.com/sohaibseniorswe-sys/huddle/internal/wizard"
 )
 
 const sandbox = "sohaibseniorswe-sys/huddle-sandbox"
@@ -93,6 +94,12 @@ func testDeps(t *testing.T, dir string, env map[string]string, stdin string) (de
 			l.Controls = &loop.Controls{}
 			return l.Run(ctx)
 		},
+		// Nor the wizard: this stand-in saves the settings it is given,
+		// as a human pressing Enter at every step would.
+		runWizard: func(_ context.Context, wd wizard.Deps, c config.Config) (config.Config, error) {
+			return c, config.Save(wd.Home, c)
+		},
+		validate: func(context.Context, agents.CLI, string, string) error { return nil },
 	}, &stdout, &stderr
 }
 
@@ -310,6 +317,7 @@ func TestRunScreenOrPlain(t *testing.T) {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
 			dir := gitRepo(t, "https://github.com/"+sandbox)
 			d, stdout, _ := testDeps(t, dir, nil, "")
+			saveSettings(t, d, sandbox)
 			var stream io.Writer = &bytes.Buffer{} // anything but nil
 			d.runAgents = func(_, _ string, _ agents.Team, s io.Writer) loop.Agents { stream = s; return noAgents{t} }
 			var cfg app.Config
@@ -400,5 +408,159 @@ func TestInvalidSettingsStopTheStart(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), `agents.pm.effort: "none" is not a Claude Code effort`) {
 		t.Errorf("stderr = %q", stderr.String())
+	}
+}
+
+// saveSettings writes the default settings for repo under d's HOME, so the
+// wizard does not run.
+func saveSettings(t *testing.T, d deps, repo string) {
+	t.Helper()
+	home, _ := d.lookupEnv("HOME")
+	if err := config.Save(home, config.Default(repo)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFirstRunOpensTheWizardThenSkipsIt(t *testing.T) {
+	dir := gitRepo(t, "https://github.com/"+sandbox)
+	d, stdout, stderr := testDeps(t, dir, nil, "")
+	calls := 0
+	save := d.runWizard
+	d.runWizard = func(ctx context.Context, wd wizard.Deps, c config.Config) (config.Config, error) {
+		calls++
+		if wd.Target != sandbox || wd.Home == "" || wd.GH == nil || wd.Validate == nil || wd.CheckCLI == nil {
+			t.Errorf("wizard deps = %+v", wd)
+		}
+		return save(ctx, wd, c)
+	}
+	args := []string{"--repo", sandbox, "--yes", "--plain"}
+	if code := run(context.Background(), []string{"--repo", sandbox, "--yes"}, d); code != loop.ExitInterrupted {
+		t.Fatalf("first run: exit %d, stderr: %s", code, stderr.String())
+	}
+	if calls != 1 || !strings.Contains(stdout.String(), "✔ settings saved to ~/.huddle/projects/sohaibseniorswe-sys_huddle-sandbox.yaml") {
+		t.Fatalf("wizard ran %d times; output:\n%s", calls, stdout)
+	}
+	// The next start finds the file: no wizard, even with --plain.
+	if code := run(context.Background(), args, d); code != loop.ExitInterrupted {
+		t.Fatalf("second run: exit %d, stderr: %s", code, stderr.String())
+	}
+	if calls != 1 {
+		t.Errorf("wizard ran %d times, want once", calls)
+	}
+}
+
+func TestSetupRunsTheWizardWithTheCurrentSettings(t *testing.T) {
+	d, stdout, _ := testDeps(t, t.TempDir(), nil, "")
+	home, _ := d.lookupEnv("HOME")
+	c := config.Default(sandbox)
+	c.Autonomy = 3
+	c.Agents.Dev.Effort = "high"
+	if err := config.Save(home, c); err != nil {
+		t.Fatal(err)
+	}
+	var got config.Config
+	d.runWizard = func(_ context.Context, _ wizard.Deps, c config.Config) (config.Config, error) {
+		got = c
+		return c, nil
+	}
+	// Flags after "setup" count too. setup exits once the settings are saved.
+	if code := run(context.Background(), []string{"setup", "--repo", sandbox}, d); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if got.Autonomy != 3 || got.Agents.Dev.Effort != "high" || got.Repo != sandbox {
+		t.Errorf("wizard started from %+v, want the saved settings", got)
+	}
+	if !strings.Contains(stdout.String(), "settings saved") || strings.Contains(stdout.String(), "control issue") {
+		t.Errorf("output = %q", stdout.String())
+	}
+}
+
+func TestPlainWithoutSettings(t *testing.T) {
+	for _, args := range [][]string{{"--repo", sandbox, "--plain"}, {"--plain", "setup"}} {
+		d, _, stderr := testDeps(t, t.TempDir(), nil, "")
+		d.runWizard = func(context.Context, wizard.Deps, config.Config) (config.Config, error) {
+			t.Error("the wizard ran with --plain")
+			return config.Config{}, nil
+		}
+		if code := run(context.Background(), args, d); code != 2 {
+			t.Errorf("%v: exit %d, want 2", args, code)
+		}
+		if stderr.String() != "Run huddle setup first\n" {
+			t.Errorf("%v: stderr = %q", args, stderr.String())
+		}
+	}
+}
+
+func TestWizardCanceled(t *testing.T) {
+	d, stdout, _ := testDeps(t, t.TempDir(), nil, "")
+	d.runWizard = func(context.Context, wizard.Deps, config.Config) (config.Config, error) {
+		return config.Config{}, wizard.ErrCanceled
+	}
+	if code := run(context.Background(), []string{"--repo", sandbox}, d); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if !strings.Contains(stdout.String(), "nothing was saved") {
+		t.Errorf("output = %q", stdout.String())
+	}
+}
+
+// A control issue closed while its milestone still has open issues: at
+// startup Huddle asks whether to reopen it and continue, or leave it.
+// After a reopen the PM (the label it had) runs and sets state:done.
+func TestStartupClosedControlIssueWithWorkOpen(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		args       []string
+		stdin      string
+		wantCode   int
+		wantReopen bool
+	}{
+		{"reopen and continue", []string{"--repo", sandbox}, "1\n\n", 0, true},
+		{"leave it and exit", []string{"--repo", sandbox}, "2\n", 0, false},
+		{"--yes reopens", []string{"--repo", sandbox, "--yes"}, "", 0, true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := gitRepo(t, "https://github.com/"+sandbox)
+			d, stdout, stderr := testDeps(t, dir, nil, tt.stdin)
+			saveSettings(t, d, sandbox)
+			fake := d.gh.(*gh.Fake)
+			fake.Issues[0].Closed = true
+			fake.Issues[0].Labels = append(fake.Issues[0].Labels, gh.StatePMReady)
+			fake.Milestone = []gh.IssueState{{Number: 1, Closed: true}, {Number: 4}, {Number: 5}}
+			d.clock = stopClock{}
+			d.runAgents = func(string, string, agents.Team, io.Writer) loop.Agents {
+				return &fakeAgent{gh: fake, label: gh.StateDone}
+			}
+			if code := run(context.Background(), tt.args, d); code != tt.wantCode {
+				t.Fatalf("exit %d, want %d; stderr: %s", code, tt.wantCode, stderr.String())
+			}
+			out := stdout.String()
+			if tt.stdin != "" && !strings.Contains(out, "Control issue #3 is closed but 2 issues are still open (#4, #5)") {
+				t.Errorf("no question in the output:\n%s", out)
+			}
+			if reopened := len(fake.Reopened) == 1; reopened != tt.wantReopen {
+				t.Errorf("reopened = %v, want %v; output:\n%s", reopened, tt.wantReopen, out)
+			}
+			if !tt.wantReopen && !strings.Contains(out, "left control issue #3 closed") {
+				t.Errorf("output = %s", out)
+			}
+		})
+	}
+}
+
+// With nothing left open, a closed control issue is a finished milestone,
+// not a choice: Huddle reports that there is no open control issue.
+func TestStartupClosedControlIssueNothingOpen(t *testing.T) {
+	dir := gitRepo(t, "https://github.com/"+sandbox)
+	d, _, stderr := testDeps(t, dir, nil, "")
+	saveSettings(t, d, sandbox)
+	fake := d.gh.(*gh.Fake)
+	fake.Issues[0].Closed = true
+	fake.Milestone = []gh.IssueState{{Number: 1, Closed: true}}
+	if code := run(context.Background(), []string{"--repo", sandbox, "--yes"}, d); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "no open issue labelled") || len(fake.Reopened) != 0 {
+		t.Errorf("stderr = %q, reopened %v", stderr.String(), fake.Reopened)
 	}
 }

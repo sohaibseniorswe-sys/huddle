@@ -58,23 +58,47 @@ func TestControlState(t *testing.T) {
 }
 
 func TestControlStateClosed(t *testing.T) {
-	for _, labels := range [][]string{
-		{"control"},
-		{"control", StateDone},
-		{"control", StateDevReady, StatePMReady},
-	} {
-		c, f := newControl(labels...)
+	tests := []struct {
+		labels []string
+		want   string
+	}{
+		{[]string{"control"}, StateClosed},
+		{[]string{"control", StateDevReady, StatePMReady}, StateClosed},
+		{[]string{"control", StateDone}, StateDone},
+		{[]string{"control", StatePMReady, StateDone}, StateDone},
+	}
+	for _, tt := range tests {
+		c, f := newControl(tt.labels...)
 		f.Issues[0].Closed = true
 		got, err := c.State(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got != StateClosed {
-			t.Errorf("State() with %v on a closed issue = %q, want %q", labels, got, StateClosed)
+		if got != tt.want {
+			t.Errorf("State() with %v on a closed issue = %q, want %q", tt.labels, got, tt.want)
 		}
-		if !sameLabels(f.Issues[0].Labels, labels) {
+		if !sameLabels(f.Issues[0].Labels, tt.labels) {
 			t.Errorf("labels changed on a closed issue: %v", f.Issues[0].Labels)
 		}
+	}
+}
+
+func TestControlOpenWork(t *testing.T) {
+	c, f := newControl("control")
+	f.Milestone = []IssueState{
+		{Number: 1, Closed: true},
+		{Number: 2},
+		{Number: 3},                             // the control issue itself
+		{Number: 9, Body: "x " + ControlMarker}, // another control issue
+		{Number: 10, Labels: []string{"Control"}},
+		{Number: 11},
+	}
+	got, err := c.OpenWork(context.Background(), "Sandbox M1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []int{2, 11}) {
+		t.Errorf("OpenWork = %v, want [2 11]", got)
 	}
 }
 

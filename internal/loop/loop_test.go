@@ -854,74 +854,118 @@ func TestSwappedRoles(t *testing.T) {
 	}
 }
 
-// Huddle's definition of done: state:done, or the control issue closed
-// (whatever its label). Both end the run the same way, with the report.
-func TestDefinitionOfDone(t *testing.T) {
-	tests := []struct {
-		name   string
-		finish func(e *env) // what the PM does at the end of its turn
-		want   string       // the line Huddle prints
-	}{
-		{"done by label", func(e *env) { e.agentSets(gh.StateDone) }, "state:done: the milestone is finished"},
-		{"done by closing, label left at pm-working", func(e *env) { e.gh.Issues[0].Closed = true }, "control issue #3 is closed: the milestone is finished"},
-		{"done by closing, label set to dev-ready", func(e *env) {
-			e.agentSets(gh.StateDevReady)
-			e.gh.Issues[0].Closed = true
-		}, "control issue #3 is closed: the milestone is finished"},
-		{"done by label and closing", func(e *env) {
-			e.agentSets(gh.StateDone)
-			e.gh.Issues[0].Closed = true
-		}, "control issue #3 is closed: the milestone is finished"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			e := newEnv(t, gh.StatePMReady)
-			e.agents.steps = []func(context.Context, call) Result{
-				func(context.Context, call) Result {
-					e.agentComments("FINAL REPORT: all done")
-					tt.finish(e)
-					return Result{SessionID: "pm-1"}
-				},
-			}
-			if code := e.run(); code != ExitOK {
-				t.Fatalf("exit %d, want 0", code)
-			}
-			if len(e.agents.calls) != 1 {
-				t.Errorf("calls = %+v, want the PM's turn only", e.agents.calls)
-			}
-			out := e.out.String()
-			if !strings.Contains(out, tt.want) || !strings.Contains(out, "FINAL REPORT: all done") {
-				t.Errorf("output does not say %q with the report", tt.want)
-			}
-			if n := countMarker(e.comments(), "huddle:auto-handoff"); n != 0 {
-				t.Errorf("%d anti-stall comments, want none", n)
-			}
-			if p := e.phases(); p[len(p)-1] != PhaseDone {
-				t.Errorf("last phase = %v, want PhaseDone", p[len(p)-1])
-			}
-		})
+// Huddle's definition of done, row by row: state:done; closed with
+// nothing else open; closed while work is open (reopened, the run goes on).
+
+func TestDoneByLabel(t *testing.T) {
+	for _, closed := range []bool{false, true} {
+		e := newEnv(t, gh.StatePMReady)
+		e.gh.Milestone = []gh.IssueState{{Number: 1}} // still open: does not matter
+		e.agents.steps = []func(context.Context, call) Result{
+			func(context.Context, call) Result {
+				e.agentComments("FINAL REPORT: all done")
+				e.agentSets(gh.StateDone)
+				e.gh.Issues[0].Closed = closed
+				return Result{SessionID: "pm-1"}
+			},
+		}
+		if code := e.run(); code != ExitOK {
+			t.Fatalf("closed=%v: exit %d, want 0", closed, code)
+		}
+		if !strings.Contains(e.out.String(), "state:done: the milestone is finished") || !strings.Contains(e.out.String(), "FINAL REPORT") {
+			t.Errorf("closed=%v: no done line with the report", closed)
+		}
+		if len(e.gh.Reopened) != 0 {
+			t.Errorf("closed=%v: reopened %v", closed, e.gh.Reopened)
+		}
 	}
 }
 
-// A control issue closed before Huddle starts (with any label) is done too.
-func TestClosedAtStartup(t *testing.T) {
+func TestDoneByClosingWithNothingOpen(t *testing.T) {
+	e := newEnv(t, gh.StatePMReady)
+	e.gh.Milestone = []gh.IssueState{
+		{Number: 1, Closed: true},
+		{Number: 2, Closed: true},
+		{Number: controlNo, Labels: []string{"control"}}, // the control issue never counts
+	}
+	e.agents.steps = []func(context.Context, call) Result{
+		func(context.Context, call) Result {
+			e.agentComments("FINAL REPORT: all done")
+			e.gh.Issues[0].Closed = true // closed, label left at pm-working
+			return Result{SessionID: "pm-1"}
+		},
+	}
+	if code := e.run(); code != ExitOK {
+		t.Fatalf("exit %d, want 0", code)
+	}
+	out := e.out.String()
+	if !strings.Contains(out, "control issue #3 is closed and every other issue of the milestone is closed") || !strings.Contains(out, "FINAL REPORT") {
+		t.Error("no done line with the report")
+	}
+	if len(e.gh.Reopened) != 0 || countMarker(e.comments(), "huddle:auto-handoff") != 0 {
+		t.Errorf("reopened %v, comments %q; want neither", e.gh.Reopened, e.comments())
+	}
+	if p := e.phases(); p[len(p)-1] != PhaseDone {
+		t.Errorf("last phase = %v, want PhaseDone", p[len(p)-1])
+	}
+}
+
+func TestClosedDuringARunWithWorkOpenIsReopened(t *testing.T) {
 	e := newEnv(t, gh.StateDevReady)
-	e.gh.Issues[0].Closed = true
-	e.agentComments("the report")
+	e.gh.Milestone = []gh.IssueState{
+		{Number: 1, Closed: true},
+		{Number: 4},
+		{Number: 5, Body: "Spec in docs/x.md"},
+		{Number: controlNo, Body: gh.ControlMarker}, // found by marker, never counts
+	}
+	e.agents.steps = []func(context.Context, call) Result{
+		func(context.Context, call) Result {
+			// The Dev hands over and closes the control issue by mistake.
+			e.agentSets(gh.StatePMReady)
+			e.gh.Issues[0].Closed = true
+			return Result{SessionID: "dev-1"}
+		},
+		func(context.Context, call) Result {
+			if e.gh.Issues[0].Closed {
+				t.Error("the PM runs on a closed control issue")
+			}
+			e.agentSets(gh.StateDone)
+			return Result{SessionID: "pm-1"}
+		},
+	}
 	if code := e.run(); code != ExitOK {
 		t.Fatalf("exit %d", code)
 	}
-	if len(e.agents.calls) != 0 {
-		t.Errorf("an agent ran on a closed control issue: %+v", e.agents.calls)
+	if !slices.Equal(e.gh.Reopened, []int{controlNo}) {
+		t.Errorf("reopened %v, want [3]", e.gh.Reopened)
 	}
-	if !strings.Contains(e.out.String(), "the report") {
-		t.Error("report not printed")
+	c := e.comments()
+	if countMarker(c, reopenedMarker) != 1 || !strings.Contains(strings.Join(c, "\n"), "because issues #4, #5 are still open") {
+		t.Errorf("comments = %q, want one reopen comment naming #4, #5", c)
+	}
+	if len(e.agents.calls) != 2 || e.agents.calls[1].role != session.PM {
+		t.Errorf("calls = %+v, want the Dev then the PM (the label it had)", e.agents.calls)
+	}
+}
+
+// Closed at the first read (as after the startup choice "Reopen", or
+// closed between startup and the first poll) with work open: reopened too.
+func TestClosedAtFirstReadWithWorkOpen(t *testing.T) {
+	e := newEnv(t, gh.StateDevReady)
+	e.gh.Issues[0].Closed = true
+	e.gh.Milestone = []gh.IssueState{{Number: 4}}
+	e.agents.steps = []func(context.Context, call) Result{e.sets(gh.StateDone, "d")}
+	if code := e.run(); code != ExitOK {
+		t.Fatalf("exit %d", code)
+	}
+	if len(e.gh.Reopened) != 1 || len(e.agents.calls) != 1 || e.agents.calls[0].role != session.Dev {
+		t.Errorf("reopened %v, calls %+v; want reopened and the Dev's turn", e.gh.Reopened, e.agents.calls)
 	}
 }
 
 // When every other issue of the milestone is closed and only the control
-// issue is open, the milestone is not done for Huddle: only state:done or
-// closing the control issue finishes it. The loop keeps handing turns over.
+// issue is open, the milestone is not done: only state:done or closing the
+// control issue finishes it.
 func TestOnlyTheControlIssueOpenIsNotDone(t *testing.T) {
 	e := newEnv(t, gh.StateDevReady)
 	e.gh.Milestone = []gh.IssueState{

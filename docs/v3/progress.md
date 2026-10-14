@@ -51,7 +51,7 @@ One entry per issue: when it was built, what was built, where it differs from th
 ## v3.3 Agent choice and config
 
 - **Started:** 2026-10-14 01:57 EDT, in a session that ended about two minutes in, after reading the code and creating the branch (nothing written). Restarted 15:12 EDT; the work below was done from then on.
-- **Finished:** 2026-10-14 16:03 EDT (PR #9 merged into `v3`)
+- **Finished:** 2026-10-14 16:00 EDT (PR #9 merged into `v3`)
 - **Branch / PR:** `v3.3-agent-config` → `v3`, https://github.com/sohaibseniorswe-sys/huddle/pull/9
 
 ### What was built

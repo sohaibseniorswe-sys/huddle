@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -113,6 +114,10 @@ func TestFindControlIssue(t *testing.T) {
 			0, "found 3: #58, #60, #61",
 		},
 		{"control issue without milestone", []gh.Issue{{Number: 58, Labels: []string{"control"}}}, 0, "#58 has no milestone"},
+		{"found by marker when the label is missing", []gh.Issue{work,
+			{Number: 70, Milestone: "V4", Body: "Control issue for V4.\n\n" + gh.ControlMarker}}, 70, ""},
+		{"label and marker on two issues", []gh.Issue{control, {Number: 70, Milestone: "V4", Body: gh.ControlMarker}}, 0, "found 2: #58, #70"},
+		{"a closed control issue is not the open one", []gh.Issue{work, {Number: 50, Milestone: "V2", Labels: []string{"control"}, Closed: true}}, 0, "no open issue"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -146,5 +151,31 @@ func TestStates(t *testing.T) {
 	}
 	if got := States(gh.Issue{Labels: []string{"control"}}); len(got) != 0 {
 		t.Errorf("States() = %v, want none", got)
+	}
+}
+
+func TestFindUnfinishedControl(t *testing.T) {
+	ctx := context.Background()
+	f := &gh.Fake{
+		Issues: []gh.Issue{
+			{Number: 40, Milestone: "V1", Labels: []string{"control"}, Closed: true},                // older, also unfinished
+			{Number: 50, Milestone: "V2", Body: gh.ControlMarker, Closed: true},                     // closed early, found by marker
+			{Number: 55, Milestone: "V2b", Labels: []string{"control", gh.StateDone}, Closed: true}, // finished by label
+			{Number: 56, Milestone: "V3", Labels: []string{"bug"}, Closed: true},                    // not a control issue
+		},
+		Milestone: []gh.IssueState{{Number: 51}, {Number: 52, Closed: true}, {Number: 53}},
+	}
+	is, open, ok, err := FindUnfinishedControl(ctx, f, testRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok || is.Number != 50 || !slices.Equal(open, []int{51, 53}) {
+		t.Errorf("FindUnfinishedControl = #%d %v %v, want #50 with #51, #53 open", is.Number, open, ok)
+	}
+
+	// Nothing open in the milestone: every closed control issue is finished.
+	f.Milestone = []gh.IssueState{{Number: 51, Closed: true}}
+	if _, _, ok, err := FindUnfinishedControl(ctx, f, testRepo); ok || err != nil {
+		t.Errorf("FindUnfinishedControl with nothing open = %v, %v; want none", ok, err)
 	}
 }

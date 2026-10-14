@@ -35,3 +35,15 @@ func TopLevel(ctx context.Context, dir string) (string, error) {
 func RemoteURL(ctx context.Context, dir, remote string) (string, error) {
 	return run(ctx, dir, "remote", "get-url", remote)
 }
+
+// Commit stages files (paths relative to dir) and commits only them with
+// message, leaving anything else staged or changed as it was.
+func Commit(ctx context.Context, dir, message string, files ...string) error {
+	args := append([]string{"add", "--"}, files...)
+	if _, err := run(ctx, dir, args...); err != nil {
+		return err
+	}
+	args = append([]string{"commit", "-m", message, "--"}, files...)
+	_, err := run(ctx, dir, args...)
+	return err
+}
