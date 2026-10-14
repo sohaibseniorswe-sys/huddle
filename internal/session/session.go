@@ -16,26 +16,37 @@ type Role string
 const (
 	Dev Role = "dev"
 	PM  Role = "pm"
+	// Companion is the agent the human talks to on the run screen. Its
+	// session is kept in a file of its own (see NewCompanion).
+	Companion Role = "companion"
 )
 
 // IDs are the saved session ids; "" means none.
 type IDs struct {
-	Dev string `json:"dev,omitempty"`
-	PM  string `json:"pm,omitempty"`
+	Dev       string `json:"dev,omitempty"`
+	PM        string `json:"pm,omitempty"`
+	Companion string `json:"companion,omitempty"`
 }
 
 // Get returns the id saved for role.
 func (ids IDs) Get(role Role) string {
-	if role == PM {
+	switch role {
+	case PM:
 		return ids.PM
+	case Companion:
+		return ids.Companion
+	default:
+		return ids.Dev
 	}
-	return ids.Dev
 }
 
 func (ids *IDs) set(role Role, id string) {
-	if role == PM {
+	switch role {
+	case PM:
 		ids.PM = id
-	} else {
+	case Companion:
+		ids.Companion = id
+	default:
 		ids.Dev = id
 	}
 }
@@ -49,6 +60,19 @@ type Store struct {
 // New returns the Store for control issue number issue on repo ("owner/name").
 func New(home, repo string, issue int) Store {
 	name := fmt.Sprintf("%s_%d.json", strings.ReplaceAll(repo, "/", "_"), issue)
+	return Store{Path: filepath.Join(home, ".huddle", "sessions", name)}
+}
+
+// NewCompanion returns the Store for the companion's session on control
+// issue number issue: <home>/.huddle/sessions/<owner>_<repo>_<issue>_companion.json,
+// next to the Dev and PM file.
+//
+// The companion has a file of its own because it runs at the same time as
+// the Dev and PM. Save reads the file, changes one id and writes it back;
+// if the companion and the loop did that to one file at the same moment,
+// one of the two new ids could be lost.
+func NewCompanion(home, repo string, issue int) Store {
+	name := fmt.Sprintf("%s_%d_companion.json", strings.ReplaceAll(repo, "/", "_"), issue)
 	return Store{Path: filepath.Join(home, ".huddle", "sessions", name)}
 }
 

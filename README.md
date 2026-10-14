@@ -2,7 +2,7 @@
 
 Huddle lets two AI coding agents complete a GitHub milestone from design to delivery in one go: Codex CLI as the Dev agent, Claude Code as the PM agent. The agents talk through a control issue: they post their own comments on it and set its `state:*` label at the end of each turn. Huddle watches the label and starts whichever agent's turn it is; it adds no limits, timeouts or restrictions. The human is involved only if the PM sets `state:human-required`, or Huddle does for an account or credit error. The spec is [MVP_PLAN.md](MVP_PLAN.md).
 
-**Status:** Huddle v3 is in progress ([docs/v3](docs/v3/README.md)). v3.1 is done: after the startup checks, `huddle` shows a full-screen run screen (below). `huddle --plain` behaves like v1.
+**Status:** Huddle v3 is in progress ([docs/v3](docs/v3/README.md)). v3.1 and v3.2 are done: after the startup checks, `huddle` shows a full-screen run screen (below) with a companion agent you talk to while the Dev and PM work. `huddle --plain` behaves like v1.
 
 ## Build and run
 
@@ -28,6 +28,8 @@ After the startup checks, Huddle takes over the terminal with a fixed layout (`i
 
 - **Status bar and info line:** repo, milestone and control issue; a badge saying what is happening (`Dev (Codex) working`, `PM (Claude) working`, `Waiting for you`, `Paused · PM next`, `Waiting for usage reset · 03:45`, `Done`); issues closed, open PRs, CI on `main`, usage per agent and elapsed time. The GitHub facts are refreshed every minute and after every turn.
 - **Activity:** one line per step, newest at the bottom. Huddle's own steps, plus events read from the agents' output while they run: each Codex message's first sentence, each shell command as `$ <command>   ok` (or its exit code), and the first sentence of Claude Code's result.
+- **Companion** (when open): your conversation with the companion; see below.
+- **Slot** (when needed): the `/` menu, or a decision or action card waiting for your answer.
 - **Text field** and a **help line** with the keys that work right now.
 
 The terminal must be at least 80 × 24.
@@ -40,13 +42,24 @@ The terminal must be at least 80 × 24.
 | `/log` | The agents' raw logs for this repo, at the end of the newest run. `[` `]` older/newer run, `g` `G` start/end, PgUp/PgDn scroll. |
 | `/pause` | The running turn finishes normally; no new turn starts. |
 | `/resume` | Start the next turn now. |
-| `/reply <text>` | Only while the control issue says `state:human-required`: posts `<text>` as your comment on the control issue and sets `state:pm-ready`. Temporary until the companion (v3.2). |
-| `/companion` | Placeholder; the companion arrives in v3.2. |
-| `/quit` | Same as Ctrl+C: stops the running agent, puts its ready label back, exits. |
+| `/companion` | Opens or closes the Companion pane (● while open). Closing only hides it; the conversation is kept. |
+| `/decide` | After you have talked with the companion: asks it to draft the decision you agreed, as a card. |
+| `/decision` | While a card waits: moves the keyboard to the card. |
+| `/quit` | Same as Ctrl+C: stops the running agent (and a companion still thinking), puts its ready label back, exits. |
 
-Plain text (without `/`) is never posted anywhere; until v3.2 Huddle only says the companion is coming.
+**Focus.** Keys go only to the focused element: the text field (default), the menu, the Activity pane, the Companion pane or a card (purple border, "◆ focused"). Tab cycles text field → Activity → Companion. In Activity, ↑/↓ select a line, Enter opens the raw log at that line, Esc goes back. Typing `/` in a pane opens the menu there too, and whatever you had half-typed in the text field comes back when the menu closes. The mouse works too: the wheel scrolls the pane under the pointer, and a click focuses a pane, selects an Activity line or presses a card's button. While Huddle has the mouse, the terminal's own text selection needs Shift + drag in most terminals.
 
-**Focus.** Keys go only to the focused element: the text field (default), the menu, or the Activity pane (purple border, "◆ focused"). Tab switches between the text field and Activity. In Activity, ↑/↓ select a line, Enter opens the raw log at that line, Esc goes back. The mouse works too: the wheel scrolls the pane under the pointer and a click focuses Activity or selects a line. While Huddle has the mouse, the terminal's own text selection needs Shift + drag in most terminals.
+### The companion
+
+The human never talks to the Dev or the PM. You talk to the **companion**, a third agent that knows everything about the run and never changes anything (`internal/companion`).
+
+- **Talking.** Plain text in the text field (prefix `companion ›`) goes to the companion; the Companion pane opens and shows "companion is thinking…" while it answers. Each message is one print-mode run of Claude Code (the PM's CLI, default model; v3.3 makes this configurable) in its own session, resumed by later messages. The Dev and PM keep working meanwhile: the companion runs beside the loop, and neither waits for the other. Messages you send while it is still answering go together in its next run. Nothing you type is posted anywhere.
+- **What it knows.** Every message is wrapped in a short `HUDDLE CONTEXT` block that Huddle builds fresh: what your screen shows (for example the raw log of Codex's turn 5, opened at 22:52:07 from a given Activity line), the state label and turn, the milestone's closed and open issues, the last 15 Activity events, the newest 3 control issue comments, the PM's last output, the running agent's last 40 output lines and any card waiting. The first message of a session also carries the companion's instructions (`internal/companion/instructions.md`). It can also read the repo, issues and PRs and search the web.
+- **When the PM needs you.** When the control issue gets `state:human-required`, Huddle opens the Companion pane and asks the companion to explain the PM's question (its latest comment) before you type anything.
+- **Decisions.** When you agree on something the PM must act on (or use `/decide`), the companion writes it in `<decision>` and `<reason>` tags. Huddle shows it as a **decision card**: the statement, `Agree` and `Keep talking`. The text field keeps the keyboard while a card waits (its buttons are greyed out); `/decision` or a click moves the keyboard to the card, where ←/→ choose, Enter confirms and Esc goes back to the text field. Only one card waits at a time; a newer one replaces it.
+- **Agree** posts the decision on the control issue as you (your `gh` login), marked `<!-- huddle:decision -->`, with its reason. If the control issue says `state:human-required`, Huddle also sets `state:pm-ready` and the PM starts at once; otherwise the label stays and the PM reads the decision at its next turn (its instructions say to act on `huddle:decision` comments first). **Keep talking** posts nothing. If posting fails, the card comes back.
+- **Actions.** The companion may propose a Huddle action (`pause`, `resume`, `status`, `log HH:MM`) as an **action card** with `Agree` and `Not now`; it runs only if you agree.
+- **Files.** The conversation is saved to `~/.huddle/companion/<owner>_<repo>_<control-issue>.jsonl` and comes back when Huddle restarts. The companion's session id is in `~/.huddle/sessions/<owner>_<repo>_<control-issue>_companion.json`, next to the Dev and PM file (a file of its own, because the companion saves while the loop may be saving). Its raw output goes to `~/.huddle/logs/companion/`, apart from the runs `/log` shows.
 
 ## Startup checks
 
@@ -65,7 +78,7 @@ There is no clean-tree check: after an interrupted run the tree is normally dirt
 
 ## The watch loop
 
-Once the checks pass, Huddle watches the control issue (`internal/loop`). It reads the issue's `state:*` label every 30 seconds while no agent is running (at once after `/resume` or `/reply`), and straight after each agent exits. Only one agent runs at a time. Huddle never stops on its own: the loop ends on `state:done` (status 0), on Ctrl+C or `/quit` (status 130), or after one turn with `--once`. On the run screen, Huddle then stays open until you quit; with `--plain` it exits.
+Once the checks pass, Huddle watches the control issue (`internal/loop`). It reads the issue's `state:*` label every 30 seconds while no agent is running (at once after `/resume` or an agreed decision), and straight after each agent exits. Only one Dev or PM agent runs at a time; the companion may run beside it. Huddle never stops on its own: the loop ends on `state:done` (status 0), on Ctrl+C or `/quit` (status 130), or after one turn with `--once`. On the run screen, Huddle then stays open until you quit; with `--plain` it exits.
 
 To start a run, add `state:dev-ready` to the control issue (or `state:pm-ready` to have the PM write the first Dev prompt).
 
@@ -99,7 +112,7 @@ Agents set labels with `gh issue edit --add-label` and may leave the old one in 
 
 ### Sessions
 
-Huddle keeps one session id per agent per control issue in `~/.huddle/sessions/<owner>_<repo>_<control-issue>.json` (`{"dev": "...", "pm": "..."}`), so sessions survive a restart of Huddle. Each run's session id replaces the saved one. **Fallback:** if a resumed run exits non-zero without setting a new label (and without a usage-limit message), Huddle forgets that session and runs the same turn once more in a fresh session; only if that run also leaves the label unchanged does anti-stall apply. To start an agent afresh, delete the session file or its entry. Each control issue has its own file, so a new control issue starts with fresh sessions.
+Huddle keeps one session id per agent per control issue in `~/.huddle/sessions/<owner>_<repo>_<control-issue>.json` (`{"dev": "...", "pm": "..."}`), so sessions survive a restart of Huddle. The companion's is in `<owner>_<repo>_<control-issue>_companion.json` next to it. Each run's session id replaces the saved one. **Fallback:** if a resumed run exits non-zero without setting a new label (and without a usage-limit message), Huddle forgets that session and runs the same turn once more in a fresh session; only if that run also leaves the label unchanged does anti-stall apply. To start an agent afresh, delete the session file or its entry. Each control issue has its own file, so a new control issue starts with fresh sessions.
 
 ### Ctrl+C
 
@@ -139,6 +152,7 @@ Checked on 2026-10-12 against `codex exec --help`, `codex exec resume --help` an
 |-------|---------|-------|--------|
 | Dev | `codex-cli 0.160.0` | `codex exec --strict-config --ignore-user-config -c sandbox_mode="danger-full-access" -c approval_policy="never" --output-last-message <file> -` | `codex exec resume --strict-config --ignore-user-config -c sandbox_mode="danger-full-access" -c approval_policy="never" --output-last-message <file> <session-id> -` |
 | PM | Claude Code `2.1.296` | `claude -p --output-format json --dangerously-skip-permissions` | `claude -p --output-format json --dangerously-skip-permissions --resume <session-id>` |
+| Companion | Claude Code `2.1.299` | `claude -p --output-format json --tools Read,Grep,Glob,WebSearch,WebFetch,Bash --permission-mode dontAsk --strict-mcp-config --allowedTools <rules>` | the same with `--resume <session-id>` before `--allowedTools` |
 
 ### Dev (Codex)
 
@@ -154,6 +168,15 @@ Checked on 2026-10-12 against `codex exec --help`, `codex exec resume --help` an
 - **`--dangerously-skip-permissions`** ("Bypass all permission checks") exists in 2.1.296 under that name. No `--permission-mode`, no allow or deny lists of tools, no `--add-dir`.
 - **`--resume <session-id>`** resumes by id; `--continue` (most recent conversation in the directory) is never used. A bad id prints `No conversation found with session ID: <id>` and exits 1.
 - **JSON envelope.** With `--output-format json`, stdout is a single JSON object (`runner.ParseClaude`). `session_id` is the session id (the same on resume); `result` is the final message; `is_error` and `subtype` report failures. `total_cost_usd` is a notional list-price figure (`"costBasis": "list"`); runs use the claude.ai subscription login with no API key in the environment, so nothing is billed.
+
+### Companion (read-only)
+
+Checked on 2026-10-14 against `claude --help` (Claude Code `2.1.299`) and `codex exec --help` / `codex exec resume --help` (`codex-cli 0.160.0`), and by running each in the sandbox.
+
+- **Claude Code** (used in v3.2). `--tools Read,Grep,Glob,WebSearch,WebFetch,Bash` ("Specify the list of available tools from the built-in set") leaves out every tool that edits or writes files. `--permission-mode dontAsk` denies every tool call that no allow rule permits, and `--allowedTools` allows only the reading tools plus read-only shell commands: `git log/show/diff/status/blame/ls-files/grep/rev-parse` and `gh issue view/list`, `gh pr view/list/checks/diff`, `gh run list/view` (`runner.CompanionAllowed`). `--strict-mcp-config` without `--mcp-config` loads no MCP servers. `--allowedTools` takes every argument after it, so it goes last. `--permission-mode plan` was not used: in print mode it is less predictable than an explicit allow list.
+  - Checked: asked to create, commit and push a file and to comment on an issue, the bare command (without the companion's instructions) was denied every Bash call and had no file tool; nothing changed. `git log` and `gh issue view` worked. `TestSmokeCompanionIsReadOnly` repeats this (`HUDDLE_SMOKE=~/projects/huddle-sandbox go test -count=1 -run Smoke -v ./internal/companion`).
+  - Limits: allow rules from your own Claude Code settings still apply, so a broad rule there (for example `Bash(git commit:*)`) would let the companion run it; the companion's instructions also forbid any change. `git diff --output=<file>` can write a file.
+- **Codex** (for v3.3, not used yet). `codex exec --strict-config --ignore-user-config -c sandbox_mode="read-only" -c approval_policy="never"`; `-c` rather than `--sandbox read-only` because `codex exec resume` has no `--sandbox`. The run header confirms `sandbox: read-only`; asked to create and commit a file, the shell failed with `Read-only file system` and nothing changed. The read-only sandbox also blocks the network, so `gh` calls fail: a Codex companion relies on the context block.
 
 ### Smoke test
 

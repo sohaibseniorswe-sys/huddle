@@ -1,3 +1,6 @@
 # Personal Claude Code settings; must stay untracked or Claude Code treats
 # its allow rules as repository-supplied and holds them until trust.
 .claude/settings.local.json
+
+# Test binaries (go build -o bin/huddle-v3 ./cmd/huddle).
+/bin/

@@ -10,9 +10,10 @@ import "strings"
 const (
 	Status    = "/status"
 	Companion = "/companion"
+	Decide    = "/decide"
+	Decision  = "/decision"
 	Pause     = "/pause"
 	Resume    = "/resume"
-	Reply     = "/reply"
 	Log       = "/log"
 	Quit      = "/quit"
 )
@@ -21,9 +22,6 @@ const (
 type Command struct {
 	Name string // "/status"
 	Desc string // one short line for the menu
-	// Args is true if text follows the name, as in "/reply <text>". Tab
-	// then completes the name with a space after it.
-	Args bool
 	// Lit is true if the menu marks the command with ● because what it
 	// toggles is on (/companion while the pane is open).
 	Lit bool
@@ -32,9 +30,10 @@ type Command struct {
 // State is what the visibility rules look at.
 type State struct {
 	CompanionOpen bool // the Companion pane is open
+	Conversation  bool // the human and the companion have talked
+	CardWaiting   bool // a decision or action card waits for an answer
 	AgentActive   bool // an agent is running or about to run
 	Paused        bool // /pause was used and no /resume yet
-	HumanRequired bool // the control issue says state:human-required
 }
 
 // Visible returns the commands that make sense in state s, in menu order.
@@ -58,9 +57,10 @@ func all(s State) []Command {
 	return []Command{
 		{Name: Status, Desc: "facts: issues, PRs, CI, turns, usage, elapsed"},
 		companion,
+		{Name: Decide, Desc: "draft a decision from the companion conversation"},
+		{Name: Decision, Desc: "answer the waiting card"},
 		{Name: Pause, Desc: "let the current turn finish, start no new one"},
 		{Name: Resume, Desc: "start the next turn now"},
-		{Name: Reply, Desc: "answer the PM on the control issue: /reply <text>", Args: true},
 		{Name: Log, Desc: "raw output of every agent run, scrollable"},
 		{Name: Quit, Desc: "stop the running agent now; it resumes on next start"},
 	}
@@ -73,16 +73,17 @@ func shown(name string, s State) bool {
 		return s.AgentActive && !s.Paused
 	case Resume:
 		return s.Paused
-	case Reply:
-		// Temporary until v3.2 brings the companion and decision cards.
-		return s.HumanRequired
+	case Decide:
+		return s.Conversation
+	case Decision:
+		return s.CardWaiting
 	default:
 		return true
 	}
 }
 
 // Filter returns the commands in cmds that match what is typed in the text
-// field, for example "/s" or "/reply yes, go ahead". Before a space, every
+// field, for example "/s" or "/log now". Before a space, every
 // command whose name starts with the typed word matches. Once a space
 // follows the word (arguments are being typed), only that exact command
 // matches.
@@ -98,7 +99,7 @@ func Filter(cmds []Command, typed string) []Command {
 }
 
 // Split splits typed text into the command name and its argument text:
-// "/reply  yes, go" gives "/reply" and "yes, go".
+// "/log  older runs" gives "/log" and "older runs".
 func Split(typed string) (name, args string) {
 	name, args, _ = strings.Cut(strings.TrimSpace(typed), " ")
 	return name, strings.TrimSpace(args)

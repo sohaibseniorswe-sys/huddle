@@ -1,17 +1,20 @@
 package app
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
 	"github.com/sohaibseniorswe-sys/huddle/internal/activity"
+	"github.com/sohaibseniorswe-sys/huddle/internal/companion"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
@@ -40,6 +43,59 @@ type fixture struct {
 	stopped bool   // cfg.Stop was called
 	logPath string // the fake raw log of turn 5
 	log     string // its content
+	comp    *fakeCompanion
+	history companion.History
+}
+
+// fakeCompanion answers with the replies it is given, in order, and
+// records what it was asked.
+type fakeCompanion struct {
+	replies []string
+	err     error
+	asked   []asked
+}
+
+// asked is one message the fake companion received.
+type asked struct {
+	context string // the HUDDLE CONTEXT block
+	message string
+}
+
+func (c *fakeCompanion) Ask(_ context.Context, contextBlock, message string) (string, error) {
+	c.asked = append(c.asked, asked{context: contextBlock, message: message})
+	if c.err != nil {
+		return "", c.err
+	}
+	if len(c.replies) == 0 {
+		return "OK.", nil
+	}
+	reply := c.replies[0]
+	c.replies = c.replies[1:]
+	return reply, nil
+}
+
+// lastAsked returns the newest message the fake companion received.
+func (c *fakeCompanion) lastAsked() asked {
+	if len(c.asked) == 0 {
+		return asked{}
+	}
+	return c.asked[len(c.asked)-1]
+}
+
+// The conversation of screens 02 to 08 in docs/v3/screens.
+var talk = []struct{ you, companion string }{
+	{"Why JSON and not CSV for the export?", "The PM decided that at 23:03, after Codex asked in its handover on #58. The dashboard in #64 reads JSON, so CSV would need a second parser."},
+	{"Could we add CSV later?", "Yes, as a small follow-up issue. Codex is on #62 now and CI for PR #73 is running. Want me to draft a decision?"},
+}
+
+// talk has the conversation of screens 02 to 08 with the companion, which
+// opens the Companion pane.
+func (f *fixture) talk() {
+	f.t.Helper()
+	for _, t := range talk {
+		f.comp.replies = append(f.comp.replies, t.companion)
+		f.keys(t.you, "enter")
+	}
 }
 
 // at returns 2026-10-13 at hh:mm UTC.
@@ -95,16 +151,9 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 
-	f.m = New(Config{
-		Repo:      testRepo,
-		Milestone: "Milestone 3",
-		Control:   gh.Control{Client: f.gh, Repo: testRepo, Number: 58},
-		Controls:  &loop.Controls{},
-		Stop:      func() { f.stopped = true },
-		LogDir:    logDir,
-		RepoDir:   testRepoDir,
-		Now:       func() time.Time { return f.now },
-	})
+	f.comp = &fakeCompanion{}
+	f.history = companion.History{Path: filepath.Join(t.TempDir(), "companion.jsonl")}
+	f.m = New(f.config(logDir))
 	f.send(tea.WindowSizeMsg{Width: testWidth, Height: testHeight})
 	f.send(StatusMsg{Phase: loop.PhaseWorking, Role: session.Dev, Turn: 5, Since: at(22, 41)})
 	f.run(f.m.fetchFacts()) // what Init starts
@@ -142,6 +191,22 @@ func newFixture(t *testing.T) *fixture {
 	return f
 }
 
+// config returns the run screen's Config, with the fixture's fakes.
+func (f *fixture) config(logDir string) Config {
+	return Config{
+		Repo:      testRepo,
+		Milestone: "Milestone 3",
+		Control:   gh.Control{Client: f.gh, Repo: testRepo, Number: 58},
+		Controls:  &loop.Controls{},
+		Stop:      func() { f.stopped = true },
+		LogDir:    logDir,
+		RepoDir:   testRepoDir,
+		Now:       func() time.Time { return f.now },
+		Companion: f.comp,
+		History:   f.history,
+	}
+}
+
 // send passes msg to Update and keeps the new model. It returns the
 // command Update returned.
 func (f *fixture) send(msg tea.Msg) tea.Cmd {
@@ -164,10 +229,10 @@ func (f *fixture) run(cmd tea.Cmd) {
 		for _, c := range msg {
 			f.run(c)
 		}
-	case tickMsg:
+	case tickMsg, spinner.TickMsg:
 		// A timer: not run in tests.
 	default:
-		f.send(msg)
+		f.run(f.send(msg)) // and whatever that message starts in turn
 	}
 }
 
@@ -211,4 +276,42 @@ func (f *fixture) lastEvent() string {
 // sizeMsg is a terminal resize to width × height.
 func sizeMsg(width, height int) tea.WindowSizeMsg {
 	return tea.WindowSizeMsg{Width: width, Height: height}
+}
+
+// newDecisionFixture returns the run screen of screen 10: the PM needs a
+// Mapbox token, the companion explained it, the human chose, a decision
+// card waits, and the human is typing another question.
+func newDecisionFixture(t *testing.T) *fixture {
+	t.Helper()
+	f := newFixture(t)
+	f.m.events, f.m.rendered = nil, nil
+	for _, e := range []struct {
+		hh, mm int
+		actor  string
+		text   string
+	}{
+		{23, 41, "codex", "Merged PR #74, closed #64"},
+		{23, 58, "codex", "Closed #66; #65 blocked: no MAPBOX_TOKEN"},
+		{23, 59, "codex", "Handed over to PM (Decision needed)"},
+		{0, 2, "pm", "Needs you: #65 needs a Mapbox token"},
+	} {
+		f.send(EventMsg{Time: at(e.hh, e.mm), Actor: e.actor, Text: e.text})
+	}
+	f.gh.Issues[0].Labels = []string{"control", gh.StateHumanRequired}
+	f.gh.IssueComments = map[int][]gh.Comment{58: {{Author: "sohaibseniorswe-sys", Body: "Status: Decision needed\n#65 needs a Mapbox token only the human can create."}}}
+	for i := range f.gh.Milestone[:6] {
+		f.gh.Milestone[i].Closed = true
+	}
+	f.run(f.m.fetchFacts())
+	f.now = at(0, 2)
+	f.comp.replies = []string{
+		"The PM needs a token only you can create. Options: Mapbox (token), MapLibre with free OpenStreetMap tiles (no key), or skip the map for now.",
+		"MapLibre with OSM tiles needs no key and keeps #65's acceptance criteria. Here's the decision:\n" +
+			"<decision>Use MapLibre with OpenStreetMap tiles for #65 now (no API key). Add a follow-up issue in Milestone 4 to switch to Mapbox once the token exists.</decision>\n" +
+			"<reason>no Mapbox token yet; MapLibre keeps #65's acceptance criteria.</reason>",
+	}
+	f.run(f.send(StatusMsg{Phase: loop.PhaseHuman, Turn: 6, Since: f.now}))
+	f.keys("Use OpenStreetMap for now. I'll get a Mapbox token next week.", "enter")
+	f.keys("Is MapLibre as fast as Mapbox on mobile?")
+	return f
 }

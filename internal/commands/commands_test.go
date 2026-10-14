@@ -23,8 +23,10 @@ func TestVisible(t *testing.T) {
 			[]string{Status, Companion, Pause, Log, Quit}},
 		{"paused", State{AgentActive: true, Paused: true},
 			[]string{Status, Companion, Resume, Log, Quit}},
-		{"human required", State{HumanRequired: true},
-			[]string{Status, Companion, Reply, Log, Quit}},
+		{"after talking to the companion", State{Conversation: true},
+			[]string{Status, Companion, Decide, Log, Quit}},
+		{"a card waits", State{Conversation: true, CardWaiting: true},
+			[]string{Status, Companion, Decide, Decision, Log, Quit}},
 		{"done, nothing to run", State{},
 			[]string{Status, Companion, Log, Quit}},
 	} {
@@ -46,17 +48,18 @@ func TestCompanionLitWhileOpen(t *testing.T) {
 }
 
 func TestFilter(t *testing.T) {
-	visible := Visible(State{AgentActive: true, HumanRequired: true})
+	visible := Visible(State{AgentActive: true, Conversation: true, CardWaiting: true})
 	for _, tt := range []struct {
 		typed string
 		want  []string
 	}{
-		{"/", []string{Status, Companion, Pause, Reply, Log, Quit}},
+		{"/", []string{Status, Companion, Decide, Decision, Pause, Log, Quit}},
 		{"/s", []string{Status}},
 		{"/p", []string{Pause}},
-		{"/re", []string{Reply}},
-		{"/reply yes, go ahead", []string{Reply}},
-		{"/re yes", nil}, // with arguments only the exact name matches
+		{"/dec", []string{Decide, Decision}},
+		{"/decision", []string{Decision}},
+		{"/log now", []string{Log}},
+		{"/lo now", nil}, // with arguments only the exact name matches
 		{"/x", nil},
 	} {
 		if got := names(Filter(visible, tt.typed)); !slices.Equal(got, tt.want) {
@@ -76,8 +79,8 @@ func TestFilterHidesCommandsThatDoNotApply(t *testing.T) {
 }
 
 func TestSplit(t *testing.T) {
-	name, args := Split("  /reply   yes, use MapLibre  ")
-	if name != Reply || args != "yes, use MapLibre" {
+	name, args := Split("  /log   older runs  ")
+	if name != Log || args != "older runs" {
 		t.Errorf("Split() = %q, %q", name, args)
 	}
 }

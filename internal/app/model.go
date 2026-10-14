@@ -34,6 +34,13 @@
 //
 // The screen talks back to the loop through loop.Controls (pause, resume,
 // wake), and stops it by canceling its context (/quit).
+//
+// # The companion
+//
+// The companion (package companion) answers the human in its own pane.
+// Each message runs the companion's CLI inside a tea.Cmd, so it never
+// blocks Update, and the loop, on its own goroutine, never waits for it.
+// See companion.go.
 package app
 
 import (
@@ -41,13 +48,16 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/cursor"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/sohaibseniorswe-sys/huddle/internal/activity"
+	"github.com/sohaibseniorswe-sys/huddle/internal/companion"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
+	"github.com/sohaibseniorswe-sys/huddle/internal/ui"
 )
 
 // tickInterval is how often the screen updates the clock (for the elapsed
@@ -61,11 +71,19 @@ const factsInterval = 60 * time.Second
 // placeholder is the text field's grey hint while it is empty.
 const placeholder = "Type to talk to the companion, / for commands"
 
+// Companion answers the human's messages. companion.Agent implements it;
+// tests use a fake.
+type Companion interface {
+	// Ask sends message, wrapped in the context block, and returns the
+	// companion's reply. It blocks until the companion has answered.
+	Ask(ctx context.Context, contextBlock, message string) (string, error)
+}
+
 // Config is what the run screen needs to know about the run.
 type Config struct {
 	Repo      string     // the target repo, "owner/name"
 	Milestone string     // the milestone being worked on
-	Control   gh.Control // the control issue, for the facts and /reply
+	Control   gh.Control // the control issue, for the facts and decisions
 	// Controls pauses, resumes and wakes the loop.
 	Controls *loop.Controls
 	// Stop cancels the loop's context: the running agent is killed and the
@@ -74,15 +92,29 @@ type Config struct {
 	LogDir  string           // where the agents' raw logs are, ~/.huddle/logs
 	RepoDir string           // the repo's local clone; /log shows only its runs
 	Now     func() time.Time // the clock; time.Now outside tests
+
+	// Companion answers the human; nil means there is none.
+	Companion Companion
+	// History is the companion conversation's file. A zero History (no
+	// Path) keeps the conversation in memory only.
+	History companion.History
+	// CompanionCtx is the context every companion run gets. Run cancels it
+	// on /quit and when the screen closes, which kills a running companion.
+	// nil means context.Background().
+	CompanionCtx context.Context
+	// StopCompanion cancels CompanionCtx; nil means nothing to cancel.
+	StopCompanion context.CancelFunc
 }
 
 // focus is the element that receives the keys. Exactly one has it.
 type focus int
 
 const (
-	focusInput    focus = iota // the text field (the default)
-	focusMenu                  // the slash-command menu, while it is open
-	focusActivity              // the Activity slot
+	focusInput     focus = iota // the text field (the default)
+	focusMenu                   // the slash-command menu, while it is open
+	focusActivity               // the Activity slot
+	focusCompanion              // the Companion pane
+	focusCard                   // the decision or action card, after /decision
 )
 
 // view is what the Activity slot shows. Every view uses the same rows.
@@ -109,6 +141,9 @@ type Model struct {
 
 	input   textinput.Model // the text field
 	menuSel int             // the selected row of the menu
+	// stash is the text field's half-typed text while a command typed in
+	// from a pane is in the field; see slashOpensMenu.
+	stash string
 
 	events     []activity.Event
 	rendered   [][]string     // each event drawn as lines, cached; see activity.go
@@ -128,6 +163,17 @@ type Model struct {
 
 	quitting bool // /quit: waiting for the loop to put its label back
 	loopDone bool // the loop has ended
+
+	// The companion; see companion.go.
+	companionOpen bool              // the Companion pane is shown
+	chat          []companion.Entry // the conversation, oldest first
+	chatVP        viewport.Model    // scrolls the conversation
+	thinking      bool              // a companion run is going on
+	spin          spinner.Model     // turns while thinking
+	queue         []string          // messages sent while thinking, asked next
+	queuePM       bool              // the next ask starts with the PM's question
+	card          card              // the card waiting for an answer, if any
+	historyErr    bool              // a history write failed and was reported
 }
 
 // New returns the run screen's model for cfg.
@@ -140,8 +186,12 @@ func New(cfg Config) Model {
 	in.Cursor.SetMode(cursor.CursorStatic)
 	in.Focus()
 
+	spin := spinner.New()
+	spin.Spinner = spinner.Dot
+	spin.Style = ui.Fg(ui.Amber)
+
 	now := cfg.Now()
-	return Model{
+	m := Model{
 		cfg:      cfg,
 		now:      now,
 		started:  now,
@@ -151,7 +201,19 @@ func New(cfg Config) Model {
 		log:      logView{vp: viewport.New(0, 0)},
 		list:     viewport.New(0, 0),
 		statusVP: viewport.New(0, 0),
+		chatVP:   viewport.New(0, 0),
+		spin:     spin,
 	}
+	// The conversation of an earlier Huddle on this control issue comes
+	// back. Reading a small file here, before the screen starts, is fine.
+	if cfg.History.Path != "" {
+		chat, err := cfg.History.Load()
+		m.chat = chat
+		if err != nil {
+			m.chat = append(m.chat, companion.Entry{Time: now, Who: companion.WhoHuddle, Text: err.Error()})
+		}
+	}
+	return m
 }
 
 // Init is called once by Bubble Tea when the program starts. The commands

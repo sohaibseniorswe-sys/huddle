@@ -40,7 +40,7 @@ func InfoLine(width int, parts []string) string {
 }
 
 // Pane is a bordered box with a title line, used for Activity, Status, the
-// raw log and (from v3.2) the Companion.
+// raw log and the Companion.
 type Pane struct {
 	Title   string
 	Hint    string         // dim text on the right of the title line
@@ -94,6 +94,18 @@ func Input(width int, prefix string, prefixColor lipgloss.Color, field string, f
 	}
 	line := Fg(prefixColor).Bold(true).Render(prefix+" › ") + field
 	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(border).
+		Padding(0, 1).Width(width - 2).Render(
+		lipgloss.NewStyle().MaxWidth(width - PaneChromeCols).Render(line))
+}
+
+// InputAside draws the text field greyed out while another element (a
+// card) has the keyboard, with a note that its half-typed text is kept.
+func InputAside(width int, prefix, text string) string {
+	line := Muted.Bold(true).Render(prefix + " › ")
+	if text != "" {
+		line += Muted.Render(text + "   (kept while you answer)")
+	}
+	return lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(Faint).
 		Padding(0, 1).Width(width - 2).Render(
 		lipgloss.NewStyle().MaxWidth(width - PaneChromeCols).Render(line))
 }

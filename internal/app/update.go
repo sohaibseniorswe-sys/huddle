@@ -3,6 +3,7 @@ package app
 import (
 	"strings"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -27,7 +28,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m, cmd = m.handleKey(msg)
 
 	case tea.MouseMsg:
-		m = m.handleMouse(msg)
+		m, cmd = m.handleMouse(msg)
 
 	case EventMsg:
 		m = m.addEvent(activity.Event(msg))
@@ -52,8 +53,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case factsMsg:
 		m = m.handleFacts(msg)
 
-	case replyMsg:
-		m = m.handleReply(msg)
+	case companionReplyMsg:
+		m, cmd = m.handleCompanionReply(msg)
+
+	case decisionMsg:
+		m = m.handleDecision(msg)
+
+	case spinner.TickMsg:
+		// The spinner asks for its next frame with a tick message. Only
+		// while the companion thinks: otherwise the ticks stop.
+		if m.thinking {
+			m.spin, cmd = m.spin.Update(msg)
+		}
 	}
 	m = m.sync()
 	return m, cmd
@@ -64,15 +75,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // something.
 func (m Model) handleStatus(s loop.Status) (Model, tea.Cmd) {
 	turnEnded := m.status.Phase == loop.PhaseWorking && s.Phase != loop.PhaseWorking && s.Phase != loop.PhaseUsageWait
+	humanNow := s.Phase == loop.PhaseHuman && m.status.Phase != loop.PhaseHuman
 	m.status = s
-	if s.Phase == loop.PhaseHuman {
-		m = m.addEvent(m.huddleEvent("Type /reply <text> to answer on the control issue; Huddle then sets state:pm-ready"))
+	var cmds []tea.Cmd
+	if humanNow {
+		// The PM needs the human: the companion explains what it asks.
+		m = m.addEvent(m.huddleEvent("Waiting for you. Talk to the companion; a decision you agree on goes to the PM"))
+		var cmd tea.Cmd
+		m, cmd = m.askAboutPMQuestion()
+		cmds = append(cmds, cmd)
 	}
 	if turnEnded && !m.fetching {
 		m.fetching = true
-		return m, m.fetchFacts()
+		cmds = append(cmds, m.fetchFacts())
 	}
-	return m, nil
+	return m, tea.Batch(cmds...)
 }
 
 // handleKey sends a key press to the focused element, and nowhere else.
@@ -90,6 +107,10 @@ func (m Model) handleKey(k tea.KeyMsg) (Model, tea.Cmd) {
 		return m.menuKey(k)
 	case focusActivity:
 		return m.activityKey(k), nil
+	case focusCompanion:
+		return m.companionKey(k), nil
+	case focusCard:
+		return m.cardKey(k)
 	default:
 		return m.inputKey(k)
 	}
@@ -99,13 +120,13 @@ func (m Model) handleKey(k tea.KeyMsg) (Model, tea.Cmd) {
 func (m Model) inputKey(k tea.KeyMsg) (Model, tea.Cmd) {
 	switch k.Type {
 	case tea.KeyTab:
-		m.focus = focusActivity
+		m.focus = m.nextFocus()
 		return m, nil
 	case tea.KeyEnter:
 		return m.submit()
 	}
 	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(k)
+	m.input, cmd = m.input.Update(asText(k))
 	// Text starting with "/" is a command: the menu opens. This also
 	// catches pasted text, which arrives as one key with many runes.
 	if strings.HasPrefix(m.input.Value(), "/") {
@@ -114,17 +135,28 @@ func (m Model) inputKey(k tea.KeyMsg) (Model, tea.Cmd) {
 	return m, cmd
 }
 
-// submit handles Enter in the text field. Plain text is never posted
-// anywhere; until v3.2 brings the companion, it only gets an explanation.
+// asText marks a key message carrying several characters as pasted text.
+// Bubble Tea delivers text that arrives quickly (a paste without bracketed
+// paste, or keys sent by a tool such as tmux) as one message per word, and
+// the text input's key bindings compare a message's text with key names:
+// the word "right" would move the cursor instead of being typed. Pasted
+// text never matches a binding.
+func asText(k tea.KeyMsg) tea.KeyMsg {
+	if k.Type == tea.KeyRunes && len(k.Runes) > 1 {
+		k.Paste = true
+	}
+	return k
+}
+
+// submit handles Enter in the text field: plain text goes to the
+// companion. It is never posted anywhere.
 func (m Model) submit() (Model, tea.Cmd) {
 	text := strings.TrimSpace(m.input.Value())
-	m.input.Reset()
-	if text == "" {
+	if text == "" || m.quitting {
 		return m, nil
 	}
-	m = m.addEvent(m.youEvent(text))
-	m = m.addEvent(m.huddleEvent("The companion arrives in v3.2; use /reply to answer the PM"))
-	return m, nil
+	m.input.Reset()
+	return m.say(text, text)
 }
 
 // menuKey handles a key while the slash-command menu is open. Typing still
@@ -133,9 +165,7 @@ func (m Model) menuKey(k tea.KeyMsg) (Model, tea.Cmd) {
 	matches := m.menuItems()
 	switch k.Type {
 	case tea.KeyEsc:
-		m.input.Reset()
-		m.focus = focusInput
-		return m, nil
+		return m.closeMenu(), nil
 	case tea.KeyUp:
 		m.menuSel = max(m.menuSel-1, 0)
 		return m, nil
@@ -144,12 +174,7 @@ func (m Model) menuKey(k tea.KeyMsg) (Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyTab:
 		if len(matches) > 0 {
-			c := matches[m.menuSel]
-			value := c.Name
-			if c.Args {
-				value += " "
-			}
-			m.input.SetValue(value)
+			m.input.SetValue(matches[m.menuSel].Name)
 			m.input.CursorEnd()
 			m.menuSel = 0
 		}
@@ -160,9 +185,9 @@ func (m Model) menuKey(k tea.KeyMsg) (Model, tea.Cmd) {
 
 	before := m.input.Value()
 	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(k)
+	m.input, cmd = m.input.Update(asText(k))
 	if !strings.HasPrefix(m.input.Value(), "/") {
-		m.focus = focusInput // the "/" was deleted: the menu closes
+		m = m.closeMenu() // the "/" was deleted: the menu closes
 	}
 	if m.input.Value() != before {
 		m.menuSel = 0
@@ -174,7 +199,7 @@ func (m Model) menuKey(k tea.KeyMsg) (Model, tea.Cmd) {
 func (m Model) activityKey(k tea.KeyMsg) Model {
 	switch k.Type {
 	case tea.KeyTab:
-		m.focus = focusInput
+		m.focus = m.nextFocus()
 		return m
 	case tea.KeyEsc:
 		if m.view == viewList {
@@ -184,12 +209,7 @@ func (m Model) activityKey(k tea.KeyMsg) Model {
 		}
 		return m
 	}
-	// "/" opens the menu from here too, as the help line says. A fast
-	// typist's or a paste's "/status" arrives as one key with many runes.
-	if k.Type == tea.KeyRunes && strings.HasPrefix(string(k.Runes), "/") {
-		m.input.SetValue(string(k.Runes))
-		m.input.CursorEnd()
-		m.focus, m.menuSel = focusMenu, 0
+	if m, ok := m.slashOpensMenu(k); ok {
 		return m
 	}
 
@@ -202,6 +222,46 @@ func (m Model) activityKey(k tea.KeyMsg) Model {
 		m = m.logKey(k)
 	}
 	return m
+}
+
+// slashOpensMenu opens the menu when "/" is typed in a pane, as the help
+// line says. A fast typist's or a paste's "/status" arrives as one key with
+// many runes. Whatever was half-typed in the text field is put aside while
+// the command is typed, and comes back when the menu closes: that is how a
+// half-typed message survives /decision (Tab to a pane, then /decision).
+func (m Model) slashOpensMenu(k tea.KeyMsg) (Model, bool) {
+	if k.Type != tea.KeyRunes || !strings.HasPrefix(string(k.Runes), "/") {
+		return m, false
+	}
+	m.stash = m.input.Value()
+	m.input.SetValue(string(k.Runes))
+	m.input.CursorEnd()
+	m.focus, m.menuSel = focusMenu, 0
+	return m, true
+}
+
+// closeMenu closes the menu: the text field gets back the text put aside
+// when the menu opened, if any, and the keyboard.
+func (m Model) closeMenu() Model {
+	m.input.SetValue(m.stash)
+	m.input.CursorEnd()
+	m.stash = ""
+	m.focus = focusInput
+	return m
+}
+
+// nextFocus is where Tab moves the keyboard from the focused element:
+// text field → Activity → Companion (when open) → text field.
+func (m Model) nextFocus() focus {
+	switch m.focus {
+	case focusInput:
+		return focusActivity
+	case focusActivity:
+		if m.companionOpen {
+			return focusCompanion
+		}
+	}
+	return focusInput
 }
 
 // listKey handles a key for the event list: ↑/↓ select a line, Enter opens
@@ -224,8 +284,8 @@ func (m Model) listKey(k tea.KeyMsg) Model {
 		m.list = scrollTo(m.list, m.eventLine(m.selected), m.eventLines(m.selected))
 	case tea.KeyEnter:
 		if m.view == viewSelect {
-			if ref := m.events[m.selected].LogRef; !ref.IsZero() {
-				m = m.openLog(ref)
+			if e := m.events[m.selected]; !e.LogRef.IsZero() {
+				m = m.openLog(e)
 			}
 		}
 	default:
@@ -235,13 +295,15 @@ func (m Model) listKey(k tea.KeyMsg) Model {
 }
 
 // handleMouse handles the mouse: the wheel scrolls the pane under the
-// pointer, a click focuses a pane or selects an Activity line.
-func (m Model) handleMouse(msg tea.MouseMsg) Model {
+// pointer, a click focuses a pane, selects an Activity line or presses a
+// card's button.
+func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 	if m.tooSmall() {
-		return m
+		return m, nil
 	}
 	l := m.layout()
 	inActivity := msg.Y >= l.activityTop && msg.Y < l.activityTop+l.activityRows
+	inCompanion := msg.Y >= l.companionTop && msg.Y < l.companionTop+l.companionRows
 	inSlot := msg.Y >= l.slotTop && msg.Y < l.slotTop+l.slotRows
 	inInput := msg.Y >= l.inputTop && msg.Y < l.inputTop+inputRows
 
@@ -253,12 +315,9 @@ func (m Model) handleMouse(msg tea.MouseMsg) Model {
 		}
 		switch {
 		case inActivity:
-			vp := m.activityViewport()
-			if rows < 0 {
-				vp.ScrollUp(-rows)
-			} else {
-				vp.ScrollDown(rows)
-			}
+			scrollBy(m.activityViewport(), rows)
+		case inCompanion:
+			scrollBy(&m.chatVP, rows)
 		case inSlot && m.focus == focusMenu:
 			last := max(len(m.menuItems())-1, 0)
 			m.menuSel = min(max(m.menuSel+rows/wheelRows, 0), last)
@@ -266,7 +325,7 @@ func (m Model) handleMouse(msg tea.MouseMsg) Model {
 
 	case tea.MouseButtonLeft:
 		if msg.Action != tea.MouseActionPress {
-			return m
+			return m, nil
 		}
 		switch {
 		case inActivity:
@@ -278,6 +337,17 @@ func (m Model) handleMouse(msg tea.MouseMsg) Model {
 					m.view, m.selected = viewSelect, i
 				}
 			}
+		case inCompanion:
+			m.focus = focusCompanion
+		case inSlot && m.focus != focusMenu && m.card.kind != cardNone:
+			// Find the button in the card as it is drawn now, before the
+			// focus changes how its buttons look.
+			b, ok := m.cardView(l.slotRows).ButtonAt(msg.X, msg.Y-l.slotTop)
+			m.focus = focusCard
+			if ok {
+				m.card.sel = b
+				return m.confirmCard()
+			}
 		case inInput:
 			m.focus = focusInput
 			if strings.HasPrefix(m.input.Value(), "/") {
@@ -285,7 +355,16 @@ func (m Model) handleMouse(msg tea.MouseMsg) Model {
 			}
 		}
 	}
-	return m
+	return m, nil
+}
+
+// scrollBy scrolls vp down by rows, or up if rows is negative.
+func scrollBy(vp *viewport.Model, rows int) {
+	if rows < 0 {
+		vp.ScrollUp(-rows)
+	} else {
+		vp.ScrollDown(rows)
+	}
 }
 
 // activityViewport returns the viewport of the Activity slot's current
@@ -340,8 +419,10 @@ func (m Model) commandState() commands.State {
 		active = true
 	}
 	return commands.State{
+		CompanionOpen: m.companionOpen,
+		Conversation:  m.conversation(),
+		CardWaiting:   m.card.kind != cardNone,
 		AgentActive:   active && !m.loopDone,
 		Paused:        m.paused,
-		HumanRequired: m.status.Phase == loop.PhaseHuman,
 	}
 }

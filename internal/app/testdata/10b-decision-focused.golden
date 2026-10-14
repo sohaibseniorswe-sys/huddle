@@ -1,0 +1,34 @@
+ HUDDLE  palantir · Milestone 3 · control #58                                     ● Waiting for you 
+ Issues 6/7 closed  ·  PRs #73 open  ·  CI green  ·  Usage Codex ok · Claude ok  ·  Elapsed 2h14m   
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Activity                                                                                         │
+│   23:58  codex   Closed #66; #65 blocked: no MAPBOX_TOKEN                                        │
+│   23:59  codex   Handed over to PM (Decision needed)                                             │
+│   00:02  pm      Needs you: #65 needs a Mapbox token                                             │
+│   00:02  huddle  Waiting for you. Talk to the companion; a decision you agree on goes to the PM  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Companion                                                                                        │
+│ huddle  The PM set state:human-required and waits for you. Asking the companion to explain its   │
+│ question…                                                                                        │
+│                                                                                                  │
+│ companion  The PM needs a token only you can create. Options: Mapbox (token), MapLibre with free │
+│ OpenStreetMap tiles (no key), or skip the map for now.                                           │
+│                                                                                                  │
+│ you  Use OpenStreetMap for now. I'll get a Mapbox token next week.                               │
+│                                                                                                  │
+│ companion  MapLibre with OSM tiles needs no key and keeps #65's acceptance criteria. Here's the  │
+│ decision:                                                                                        │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ DECISION  ◆ focused                              ←/→ choose · enter confirm · esc back to typing ┃
+┃ Use MapLibre with OpenStreetMap tiles for #65 now (no API key). Add a follow-up issue in         ┃
+┃ Milestone 4 to switch to Mapbox once the token exists.                                           ┃
+┃ Reason: no Mapbox token yet; MapLibre keeps #65's acceptance criteria.                           ┃
+┃   ▸ Agree      Keep talking                                                                      ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ companion › Is MapLibre as fast as Mapbox on mobile?   (kept while you answer)                   │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ ←/→ choose  ·  enter confirm  ·  esc back to typing                                                

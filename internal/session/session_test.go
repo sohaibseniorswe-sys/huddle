@@ -97,3 +97,21 @@ func TestForget(t *testing.T) {
 		t.Errorf("Forget() with no file: %v", err)
 	}
 }
+
+func TestCompanionHasItsOwnFile(t *testing.T) {
+	home := t.TempDir()
+	c := NewCompanion(home, "sohaibseniorswe-sys/palantir", 58)
+	if want := filepath.Join(home, ".huddle/sessions/sohaibseniorswe-sys_palantir_58_companion.json"); c.Path != want {
+		t.Errorf("Path = %q, want %q", c.Path, want)
+	}
+	if err := c.Save(Companion, "talk-1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Load().Get(Companion); got != "talk-1" {
+		t.Errorf("Get(Companion) = %q, want talk-1", got)
+	}
+	// The Dev and PM file is untouched.
+	if got := New(home, "sohaibseniorswe-sys/palantir", 58).Load(); got != (IDs{}) {
+		t.Errorf("Dev and PM ids = %+v, want none", got)
+	}
+}
