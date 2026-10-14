@@ -5,8 +5,8 @@ One entry per issue: when it was built, what was built, where it differs from th
 ## v3.2 Companion and decisions
 
 - **Started:** 2026-10-14 00:56 EDT (first timestamp recorded; reading the specs began a few minutes earlier)
-- **Finished:** 2026-10-14 01:30 EDT (PR into `v3`)
-- **Branch / PR:** `v3.2-companion` → `v3`
+- **Finished:** 2026-10-14 01:21 EDT (PR #8 merged into `v3`)
+- **Branch / PR:** `v3.2-companion` → `v3`, https://github.com/sohaibseniorswe-sys/huddle/pull/8
 
 ### What was built
 
