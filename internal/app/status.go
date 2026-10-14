@@ -150,7 +150,7 @@ func (m Model) statusContent() string {
 		kv("Issues", m.issuesText()),
 		kv("Open PRs", plain(m.openPRsText())),
 		kv("Main", m.mainText()),
-		kv("Decisions", plain("none yet · decision cards arrive in v3.2")),
+		kv("Decisions", plain(m.decisionsText())),
 		kv("Autonomy", plain("not set · the autonomy dial arrives in v3.5")),
 		kv("Usage", plain(usage)),
 		kv("Elapsed", plain(elapsed(m.now.Sub(m.started))+" · started "+m.started.Format("15:04"))),

@@ -13,14 +13,14 @@
 │ 22:52:11   succeeded in 4231ms:                                                                  │
 │ 22:52:11   * [new branch]      agent/issue-62 -> agent/issue-62                                  │
 │ 22:52:11  https://github.com/sohaibseniorswe-sys/palantir/pull/73                                │
-│ 22:52:12                                                                                         │
-│ 22:52:12  codex                                                                                  │
-│ 22:52:12  Waiting for CI on PR #73                                                               │
-│ 22:52:13                                                                                         │
-│ 22:52:13  exec                                                                                   │
-│ 22:52:13  /bin/bash -lc 'gh pr checks 73 --watch --interval 10' in /home/u/projects/palantir     │
-│ 22:52:23  test    pending 0   https://github.com/sohaibseniorswe-sys/palantir/actions/runs/38461 │
-│ 22:52:43  test    pass    31s https://github.com/sohaibseniorswe-sys/palantir/actions/runs/38461 │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Companion                                                                                        │
+│ you  What am I looking at?                                                                       │
+│                                                                                                  │
+│ companion  Codex's raw log for turn 5 at 22:52:07. It pushed agent/issue-62, opened PR #73 for   │
+│ the /export endpoint and started watching CI, which passed 36 seconds later at 22:52:43.         │
+│                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │
 │                                                                                                  │

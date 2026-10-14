@@ -48,6 +48,41 @@ func TestAgentCommands(t *testing.T) {
 	}
 }
 
+func TestCompanionCommandIsReadOnly(t *testing.T) {
+	allowed := "--allowedTools Read Grep Glob WebSearch WebFetch Bash(git log:*) Bash(git show:*) Bash(git diff:*) " +
+		"Bash(git status:*) Bash(git blame:*) Bash(git ls-files:*) Bash(git grep:*) Bash(git rev-parse:*) " +
+		"Bash(gh issue view:*) Bash(gh issue list:*) Bash(gh pr view:*) Bash(gh pr list:*) Bash(gh pr checks:*) " +
+		"Bash(gh pr diff:*) Bash(gh run list:*) Bash(gh run view:*)"
+	head := "claude -p --output-format json --tools Read,Grep,Glob,WebSearch,WebFetch,Bash --permission-mode dontAsk --strict-mcp-config "
+	tests := []struct {
+		name string
+		spec Spec
+		want string
+	}{
+		{"fresh", Companion("/repo", "why JSON?", ""), head + allowed},
+		{"resume", Companion("/repo", "why JSON?", "c02b615b"), head + "--resume c02b615b " + allowed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := strings.Join(append([]string{tt.spec.Name}, tt.spec.Args...), " ")
+			if got != tt.want {
+				t.Errorf("command = %s\nwant      %s", got, tt.want)
+			}
+			if tt.spec.Dir != "/repo" || tt.spec.Stdin != "why JSON?" {
+				t.Errorf("Dir = %q, Stdin = %q", tt.spec.Dir, tt.spec.Stdin)
+			}
+		})
+	}
+	// No tool that writes is ever named.
+	for _, a := range Companion("/repo", "p", "").Args {
+		for _, banned := range []string{"Edit", "Write", "NotebookEdit", "--dangerously-skip-permissions", "bypassPermissions"} {
+			if strings.Contains(a, banned) {
+				t.Errorf("argument %q contains %s", a, banned)
+			}
+		}
+	}
+}
+
 func readTestdata(t *testing.T, name string) string {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join("testdata", name))

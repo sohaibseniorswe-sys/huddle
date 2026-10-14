@@ -1,5 +1,6 @@
 // Command huddle runs a Dev agent (Codex) and a PM agent (Claude Code) in
-// turns through a GitHub milestone. See MVP_PLAN.md and docs/v3.
+// turns through a GitHub milestone, with a companion agent the human talks
+// to on the run screen. See MVP_PLAN.md and docs/v3.
 //
 // After the startup checks it shows the run screen (package app), or with
 // --plain prints the loop's lines to stdout as Huddle v1 did.
@@ -21,6 +22,7 @@ import (
 
 	"github.com/sohaibseniorswe-sys/huddle/internal/app"
 	"github.com/sohaibseniorswe-sys/huddle/internal/checks"
+	"github.com/sohaibseniorswe-sys/huddle/internal/companion"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gitx"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
@@ -218,6 +220,7 @@ func run(ctx context.Context, args []string, d deps) int {
 	}
 
 	// The run screen: nothing may write to the terminal but the screen.
+	// The companion runs on the PM's CLI (Claude Code) in the same clone.
 	l.Agents = d.runAgents(root, home, nil)
 	return d.runUI(ctx, app.Config{
 		Repo:      target,
@@ -226,6 +229,15 @@ func run(ctx context.Context, args []string, d deps) int {
 		LogDir:    runner.LogDir(home),
 		RepoDir:   root,
 		Now:       time.Now,
+		Companion: companion.Agent{
+			Dir:       root,
+			Home:      home,
+			Milestone: control.Milestone,
+			Sessions:  session.NewCompanion(home, target, control.Number),
+			Run:       runner.Run,
+			Now:       time.Now,
+		},
+		History: companion.NewHistory(home, target, control.Number),
 	}, l, d.stderr)
 }
 

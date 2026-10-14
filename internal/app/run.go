@@ -36,8 +36,9 @@ func (r reporter) Status(s loop.Status)   { r.program.Send(StatusMsg(s)) }
 
 // Run shows the run screen while l runs, and returns l's exit code. The
 // terminal is taken over until the human quits (/quit or Ctrl+C) and given
-// back afterwards. l.Report and l.Controls are set here; cfg.Controls and
-// cfg.Stop must not be set by the caller.
+// back afterwards. l.Report and l.Controls are set here; cfg.Controls,
+// cfg.Stop, cfg.CompanionCtx and cfg.StopCompanion must not be set by the
+// caller.
 //
 // stderr receives any error the screen itself hits.
 func Run(ctx context.Context, cfg Config, l *loop.Loop, stderr io.Writer) int {
@@ -48,6 +49,11 @@ func Run(ctx context.Context, cfg Config, l *loop.Loop, stderr io.Writer) int {
 	cfg.Stop = stop
 	cfg.Controls = &loop.Controls{}
 	l.Controls = cfg.Controls
+	// Companion runs get a context of their own too: /quit cancels it, and
+	// so does closing the screen, which kills a companion still thinking.
+	companionCtx, stopCompanion := context.WithCancel(ctx)
+	defer stopCompanion()
+	cfg.CompanionCtx, cfg.StopCompanion = companionCtx, stopCompanion
 
 	// WithAltScreen draws on the terminal's alternate screen, like vim or
 	// less, so the shell's scrollback is back as it was afterwards.
@@ -76,6 +82,7 @@ func Run(ctx context.Context, cfg Config, l *loop.Loop, stderr io.Writer) int {
 	// put back its label. Reading code after <-done is safe: closing done
 	// happens after the goroutine's last write to code.
 	stop()
+	stopCompanion()
 	<-done
 	return code
 }

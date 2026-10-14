@@ -57,7 +57,10 @@ type logView struct {
 	to     int64     // the offset just after the last loaded line
 	size   int64     // the file's size when it was read
 	target int       // the line jumped to from Activity, an index into lines; -1 if none
-	err    error     // the last read's error
+	// origin is the Activity event the view was opened from; its Text is
+	// "" if it was opened with /log. The companion's context names it.
+	origin activity.Event
+	err    error // the last read's error
 	vp     viewport.Model
 }
 
@@ -78,6 +81,7 @@ func (v logView) atEnd() bool   { return v.to >= v.size }
 func (m Model) openLatestLog() Model {
 	m.log.runs, m.log.err = findRuns(m.cfg.LogDir, m.cfg.RepoDir)
 	m.log.run = len(m.log.runs) - 1
+	m.log.origin = activity.Event{}
 	m.log = m.log.reloadEnd()
 	m.view, m.focus = viewLog, focusActivity
 	m = m.sync()
@@ -85,9 +89,11 @@ func (m Model) openLatestLog() Model {
 	return m
 }
 
-// openLog opens the /log view at the line ref points to, with a few lines
-// of context above it.
-func (m Model) openLog(ref activity.LogRef) Model {
+// openLog opens the /log view at the line event e points to, with a few
+// lines of context above it.
+func (m Model) openLog(e activity.Event) Model {
+	ref := e.LogRef
+	m.log.origin = e
 	m.log.runs, m.log.err = findRuns(m.cfg.LogDir, m.cfg.RepoDir)
 	m.log.run = -1
 	for i, r := range m.log.runs {
@@ -119,6 +125,7 @@ func (m Model) logKey(k tea.KeyMsg) Model {
 	case "[":
 		if m.log.run > 0 {
 			m.log.run--
+			m.log.origin = activity.Event{}
 			m.log = m.log.reloadEnd()
 			m = m.sync()
 			m.log.vp.GotoBottom()
@@ -126,6 +133,7 @@ func (m Model) logKey(k tea.KeyMsg) Model {
 	case "]":
 		if m.log.run < len(m.log.runs)-1 {
 			m.log.run++
+			m.log.origin = activity.Event{}
 			m.log = m.log.reloadEnd()
 			m = m.sync()
 			m.log.vp.GotoBottom()
@@ -265,6 +273,25 @@ func (v logView) title() string {
 	}
 	r := v.runs[v.run]
 	return fmt.Sprintf("Raw log · %s · turn %d (run %d of %d)", r.agent, r.turn, v.run+1, len(v.runs))
+}
+
+// describe says what the view shows, for the companion's context:
+// "Log view, Codex turn 5 (run 12 of 12), opened at 22:52:07 from the
+// Activity line "$ gh pr create → PR #73"".
+func (v logView) describe() string {
+	if v.path() == "" {
+		return "Log view, no agent runs logged yet"
+	}
+	r := v.runs[v.run]
+	s := fmt.Sprintf("Log view, %s turn %d (run %d of %d)", r.agent, r.turn, v.run+1, len(v.runs))
+	if v.origin.Text == "" {
+		return s + ", showing the end of the run"
+	}
+	at := v.origin.Time.Format(eventTimeLayout)
+	if v.target >= 0 && v.lines[v.target].stamp != "" {
+		at = v.lines[v.target].stamp
+	}
+	return s + fmt.Sprintf(", opened at %s from the Activity line %q", at, v.origin.Text)
 }
 
 // cleanLogText makes a raw output line safe to draw: colour codes and

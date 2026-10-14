@@ -9,7 +9,6 @@ import (
 
 	"github.com/sohaibseniorswe-sys/huddle/internal/activity"
 	"github.com/sohaibseniorswe-sys/huddle/internal/commands"
-	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
 )
@@ -117,7 +116,7 @@ func TestMenuShowsOnlyCommandsThatApply(t *testing.T) {
 		{"paused", loop.Status{Phase: loop.PhasePaused, Role: session.PM}, true,
 			[]string{commands.Status, commands.Companion, commands.Resume, commands.Log, commands.Quit}},
 		{"human required", loop.Status{Phase: loop.PhaseHuman}, false,
-			[]string{commands.Status, commands.Companion, commands.Reply, commands.Log, commands.Quit}},
+			[]string{commands.Status, commands.Companion, commands.Log, commands.Quit}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFixture(t)
@@ -201,35 +200,6 @@ func TestPauseAndResume(t *testing.T) {
 	f.keys("/resume", "enter")
 	if f.m.cfg.Controls.Paused() || f.m.paused {
 		t.Error("/resume did not resume the loop")
-	}
-}
-
-func TestPlainTextIsNotPosted(t *testing.T) {
-	f := newFixture(t)
-	f.keys("why JSON?", "enter")
-	if !strings.Contains(f.lastEvent(), "companion arrives in v3.2") {
-		t.Errorf("last event %q", f.lastEvent())
-	}
-	if len(f.gh.IssueComments) != 0 {
-		t.Errorf("plain text was posted: %v", f.gh.IssueComments)
-	}
-}
-
-func TestReply(t *testing.T) {
-	f := newFixture(t)
-	f.gh.Issues[0].Labels = []string{"control", gh.StateHumanRequired}
-	f.send(StatusMsg{Phase: loop.PhaseHuman})
-	f.keys("/reply Use OpenStreetMap for now.", "enter")
-
-	comments := f.gh.IssueComments[58]
-	if len(comments) != 1 || comments[0].Body != "Use OpenStreetMap for now." {
-		t.Errorf("comments = %+v", comments)
-	}
-	if got := f.gh.Issues[0].Labels; !slices.Equal(got, []string{"control", gh.StatePMReady}) {
-		t.Errorf("labels = %v, want state:pm-ready", got)
-	}
-	if !strings.Contains(f.lastEvent(), "Posted your reply on #58") {
-		t.Errorf("last event %q", f.lastEvent())
 	}
 }
 
@@ -345,4 +315,15 @@ func names(cmds []commands.Command) []string {
 		out = append(out, c.Name)
 	}
 	return out
+}
+
+func TestWordsThatAreKeyNamesAreTyped(t *testing.T) {
+	f := newFixture(t)
+	// Fast input arrives as one message per word.
+	for _, w := range []string{"turn", " ", "right", " ", "then", " ", "up"} {
+		f.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(w)})
+	}
+	if got := f.m.input.Value(); got != "turn right then up" {
+		t.Errorf("text field = %q", got)
+	}
 }

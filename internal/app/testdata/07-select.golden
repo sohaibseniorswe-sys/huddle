@@ -2,7 +2,6 @@
  Issues 4/7 closed  ·  PRs #73 open  ·  CI green  ·  Usage Codex ok · Claude ok  ·  Elapsed 2h14m   
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Activity  ◆ focused                                                      ↑/↓ select · enter open │
-│   20:39  huddle  Started Milestone 3 · control #58                                               │
 │   20:40  codex   Read #58, AGENTS.md and the 7 milestone issues                                  │
 │   20:58  codex   Merged PR #68, closed #59                                                       │
 │   21:31  codex   Merged PR #69, closed #60                                                       │
@@ -14,17 +13,18 @@
 │   22:52  codex   $ git push -u origin agent/issue-62 && gh pr create --title 'Add /export'   ok  │
 │ ▸ 22:52  codex   Waiting for CI on PR #73   (enter: open raw log here)                           │
 │   22:53  huddle  Usage check: Codex ok, Claude Code ok                                           │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Companion                                                                                        │
+│ you  Why JSON and not CSV for the export?                                                        │
 │                                                                                                  │
+│ companion  The PM decided that at 23:03, after Codex asked in its handover on #58. The dashboard │
+│ in #64 reads JSON, so CSV would need a second parser.                                            │
 │                                                                                                  │
+│ you  Could we add CSV later?                                                                     │
 │                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
-│                                                                                                  │
+│ companion  Yes, as a small follow-up issue. Codex is on #62 now and CI for PR #73 is running.    │
+│ Want me to draft a decision?                                                                     │
 │                                                                                                  │
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯

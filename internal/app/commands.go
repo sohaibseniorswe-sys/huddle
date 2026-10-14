@@ -16,12 +16,11 @@ import (
 const githubTimeout = time.Minute
 
 // runTyped runs the command typed in the text field when Enter is pressed
-// in the menu. A visible command typed out in full runs with its
-// arguments ("/reply yes"); otherwise the highlighted command runs.
+// in the menu. A visible command typed out in full runs; otherwise the
+// highlighted command runs.
 func (m Model) runTyped(matches []commands.Command) (Model, tea.Cmd) {
 	name, args := commands.Split(m.input.Value())
-	m.input.Reset()
-	m.focus = focusInput
+	m = m.closeMenu()
 
 	run := ""
 	for _, c := range matches {
@@ -45,13 +44,17 @@ func (m Model) runCommand(name, args string) (Model, tea.Cmd) {
 		m.view, m.focus = viewStatus, focusActivity
 		m.statusVP.GotoTop()
 	case commands.Companion:
-		m = m.addEvent(m.huddleEvent("The companion arrives in v3.2"))
+		m = m.toggleCompanion()
+	case commands.Decide:
+		return m.say(commands.Decide, decideMessage)
+	case commands.Decision:
+		if m.card.kind != cardNone {
+			m.focus = focusCard
+		}
 	case commands.Pause:
 		return m.runPause(), nil
 	case commands.Resume:
 		return m.runResume(), nil
-	case commands.Reply:
-		return m.runReply(args)
 	case commands.Log:
 		m = m.openLatestLog()
 	case commands.Quit:
@@ -84,42 +87,6 @@ func (m Model) runResume() Model {
 	return m.addEvent(m.youEvent(commands.Resume))
 }
 
-// replyMsg is sent by the command runReply returns, when GitHub has
-// answered. err is nil if the reply was posted and the label set.
-type replyMsg struct{ err error }
-
-// runReply posts text as the human's comment on the control issue and
-// hands the turn to the PM. It is temporary: v3.2 replaces it with the
-// companion and decision cards.
-func (m Model) runReply(text string) (Model, tea.Cmd) {
-	if text == "" {
-		return m.addEvent(m.huddleEvent("Usage: /reply <text>")), nil
-	}
-	m = m.addEvent(m.youEvent(commands.Reply + " " + text))
-	control := m.cfg.Control
-	// The GitHub calls take a second or two, so they run in a tea.Cmd: a
-	// function Bubble Tea runs on another goroutine. Its return value comes
-	// back to Update as a message.
-	return m, func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), githubTimeout)
-		defer cancel()
-		if err := control.Comment(ctx, text); err != nil {
-			return replyMsg{err: err}
-		}
-		return replyMsg{err: control.SetState(ctx, gh.StatePMReady)}
-	}
-}
-
-// handleReply reports how /reply went. On success the loop is woken, so the
-// PM starts now instead of at the loop's next poll.
-func (m Model) handleReply(msg replyMsg) Model {
-	if msg.err != nil {
-		return m.addEvent(m.huddleEvent("Could not post your reply: " + msg.err.Error()))
-	}
-	m.cfg.Controls.Wake()
-	return m.addEvent(m.huddleEvent(fmt.Sprintf("Posted your reply on #%d and set %s", m.cfg.Control.Number, gh.StatePMReady)))
-}
-
 // runQuit stops the loop: the running agent's process group is killed and
 // the loop puts its ready label back, so the next start resumes it. The
 // screen closes when the loop reports that it has ended (LoopDoneMsg).
@@ -135,6 +102,9 @@ func (m Model) runQuit() (Model, tea.Cmd) {
 	m = m.addEvent(m.youEvent(commands.Quit))
 	m = m.addEvent(m.huddleEvent("Stopping: any running agent is stopped and its ready label put back"))
 	m.cfg.Stop()
+	if m.cfg.StopCompanion != nil {
+		m.cfg.StopCompanion() // a companion answer is no longer wanted
+	}
 	return m, nil
 }
 

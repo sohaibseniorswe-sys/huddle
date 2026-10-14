@@ -5,8 +5,8 @@ package app
 //
 //	project pane   projectRows, fixed
 //	Activity slot  flexible
-//	Companion      flexible, when open (v3.2)
-//	slot           flexible, when the menu (or, from v3.2, a card) is open
+//	Companion      flexible, when open
+//	slot           flexible, when the menu or a card is open
 //	text field     inputRows, fixed
 //	help line      helpRows, fixed
 const (

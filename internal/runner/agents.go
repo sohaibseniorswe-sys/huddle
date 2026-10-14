@@ -65,6 +65,53 @@ func PM(dir, prompt, sessionID string) Spec {
 	}
 }
 
+// CompanionTools are the only built-in Claude Code tools the companion
+// gets (--tools): it can read files, search them, search and fetch the web,
+// and run shell commands, but it has no tool that edits or writes files.
+var CompanionTools = []string{"Read", "Grep", "Glob", "WebSearch", "WebFetch", "Bash"}
+
+// CompanionAllowed are the permission rules the companion runs with
+// (--allowedTools). With --permission-mode dontAsk every tool call that no
+// rule allows is denied, so the shell can run only these read-only git and
+// gh commands. Commands joined with && or ; are checked one by one.
+var CompanionAllowed = []string{
+	"Read", "Grep", "Glob", "WebSearch", "WebFetch",
+	"Bash(git log:*)", "Bash(git show:*)", "Bash(git diff:*)", "Bash(git status:*)",
+	"Bash(git blame:*)", "Bash(git ls-files:*)", "Bash(git grep:*)", "Bash(git rev-parse:*)",
+	"Bash(gh issue view:*)", "Bash(gh issue list:*)",
+	"Bash(gh pr view:*)", "Bash(gh pr list:*)", "Bash(gh pr checks:*)", "Bash(gh pr diff:*)",
+	"Bash(gh run list:*)", "Bash(gh run view:*)",
+}
+
+// Companion returns the Spec for one companion message in dir: a Claude
+// Code print-mode run that can read and research but not change anything.
+// An empty sessionID starts a fresh session; otherwise that session is
+// resumed by id. Like the PM's, its stdout is a JSON envelope.
+//
+// Unlike the Dev and PM, the companion is restricted on purpose: it talks
+// with the human while the others work, and only agreed decisions may
+// change the project (docs/v3/issues/02-companion-and-decisions.md).
+// --strict-mcp-config without --mcp-config loads no MCP servers, whose
+// tools could write.
+func Companion(dir, prompt, sessionID string) Spec {
+	args := []string{"-p", "--output-format", "json",
+		"--tools", strings.Join(CompanionTools, ","),
+		"--permission-mode", "dontAsk",
+		"--strict-mcp-config"}
+	if sessionID != "" {
+		args = append(args, "--resume", sessionID)
+	}
+	// --allowedTools takes every argument after it, so it goes last.
+	args = append(args, "--allowedTools")
+	args = append(args, CompanionAllowed...)
+	return Spec{
+		Name:  "claude",
+		Args:  args,
+		Stdin: prompt,
+		Dir:   dir,
+	}
+}
+
 // codexSessionRe matches the "session id: <uuid>" line of the header codex
 // exec prints (on stderr) before it starts work, for fresh and resumed runs.
 var codexSessionRe = regexp.MustCompile(`(?m)^session id: ([0-9A-Za-z-]+)\s*$`)

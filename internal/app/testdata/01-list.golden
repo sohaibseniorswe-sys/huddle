@@ -31,4 +31,4 @@
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ companion › Type to talk to the companion, / for commands                                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- enter send  ·  / commands  ·  tab activity  ·  ctrl+c quit                                         
+ enter send  ·  / commands  ·  tab switch pane  ·  ctrl+c quit                                      

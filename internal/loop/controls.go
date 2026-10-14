@@ -7,8 +7,8 @@ import (
 
 // Controls lets the run screen steer the loop while the loop runs in its
 // own goroutine: pause it between turns, resume it, and wake it early from
-// a poll wait (for example right after /reply changed the label, instead of
-// up to 30 seconds later).
+// a poll wait (for example right after an agreed decision set the label,
+// instead of up to 30 seconds later).
 //
 // The run screen and the loop use Controls from different goroutines, so
 // every field is guarded by a mutex. The zero value is ready to use and

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
@@ -46,22 +47,45 @@ func checkGolden(t *testing.T, name, view string) {
 	}
 }
 
-// The screens below match docs/v3/screens at 100 × 34, without the
-// Companion pane, which arrives in v3.2.
+// The screens below match docs/v3/screens at 100 × 34.
 
 func TestViewList(t *testing.T) { // screen 01
 	f := newFixture(t)
 	checkGolden(t, "01-list", f.m.View())
 }
 
-func TestViewMenu(t *testing.T) { // screen 03
+func TestViewCompanion(t *testing.T) { // screen 02
 	f := newFixture(t)
+	f.talk()
+	f.keys("Not now. Put CSV in Milestone 4.", "tab", "tab")
+	checkGolden(t, "02-companion", f.m.View())
+}
+
+func TestViewCompanionThinking(t *testing.T) {
+	f := newFixture(t)
+	f.talk()
+	// Update starts the companion's run, but the test does not run it.
+	f.send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Why?")})
+	f.send(tea.KeyMsg{Type: tea.KeyEnter})
+	checkGolden(t, "02b-companion-thinking", f.m.View())
+}
+
+func TestViewMenu(t *testing.T) { // screen 03: ¼ Activity, ½ Companion, ¼ menu
+	f := newFixture(t)
+	f.talk()
 	f.keys("/")
 	checkGolden(t, "03-menu", f.m.View())
 }
 
+func TestViewMenuWithoutCompanion(t *testing.T) {
+	f := newFixture(t)
+	f.keys("/")
+	checkGolden(t, "03b-menu-no-companion", f.m.View())
+}
+
 func TestViewMenuFiltered(t *testing.T) { // screen 04
 	f := newFixture(t)
+	f.talk()
 	f.keys("/s")
 	checkGolden(t, "04-menu-filter", f.m.View())
 }
@@ -78,12 +102,14 @@ func TestViewPaused(t *testing.T) { // screen 05
 
 func TestViewStatus(t *testing.T) { // screen 06
 	f := newFixture(t)
+	f.talk()
 	f.keys("/status", "enter")
 	checkGolden(t, "06-status", f.m.View())
 }
 
 func TestViewSelect(t *testing.T) { // screen 07
 	f := newFixture(t)
+	f.talk()
 	f.keys("tab", "up", "up")
 	checkGolden(t, "07-select", f.m.View())
 }
@@ -91,7 +117,33 @@ func TestViewSelect(t *testing.T) { // screen 07
 func TestViewLog(t *testing.T) { // screen 08
 	f := newFixture(t)
 	f.keys("tab", "up", "up", "up", "enter")
+	f.comp.replies = []string{"Codex's raw log for turn 5 at 22:52:07. It pushed agent/issue-62, opened PR #73 for the /export endpoint and started watching CI, which passed 36 seconds later at 22:52:43."}
+	f.keys("tab", "What am I looking at?", "enter", "tab")
 	checkGolden(t, "08-log", f.m.View())
+}
+
+func TestViewLogWithoutCompanion(t *testing.T) {
+	f := newFixture(t)
+	f.keys("tab", "up", "up", "up", "enter")
+	checkGolden(t, "08b-log-no-companion", f.m.View())
+}
+
+func TestViewDecision(t *testing.T) { // screen 10: the text field keeps the keys
+	f := newDecisionFixture(t)
+	checkGolden(t, "10-decision", f.m.View())
+}
+
+func TestViewDecisionFocused(t *testing.T) { // screen 10b: after /decision
+	f := newDecisionFixture(t)
+	f.keys("tab", "/decision", "enter")
+	checkGolden(t, "10b-decision-focused", f.m.View())
+}
+
+func TestViewActionCard(t *testing.T) {
+	f := newFixture(t)
+	f.comp.replies = []string{"CI on main is red since 22:41. Pausing lets you look before the PM starts. <action>pause</action>"}
+	f.keys("Should we stop?", "enter")
+	checkGolden(t, "11-action", f.m.View())
 }
 
 func TestViewTooSmall(t *testing.T) {
