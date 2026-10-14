@@ -15,6 +15,7 @@ const (
 	Pause     = "/pause"
 	Resume    = "/resume"
 	Log       = "/log"
+	Settings  = "/settings"
 	Quit      = "/quit"
 )
 
@@ -62,6 +63,7 @@ func all(s State) []Command {
 		{Name: Pause, Desc: "let the current turn finish, start no new one"},
 		{Name: Resume, Desc: "start the next turn now"},
 		{Name: Log, Desc: "raw output of every agent run, scrollable"},
+		{Name: Settings, Desc: "this project's settings, read-only"},
 		{Name: Quit, Desc: "stop the running agent now; it resumes on next start"},
 	}
 }

@@ -1,5 +1,6 @@
 # CI runs the same checks every pull request must pass locally
-# (docs/v3/coding-guidelines.md): gofmt, go vet and go test.
+# (docs/v3/coding-guidelines.md): gofmt, go vet and go test, on Linux and
+# on macOS.
 name: CI
 
 on:
@@ -9,7 +10,11 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

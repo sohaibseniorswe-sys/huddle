@@ -18,8 +18,8 @@ import (
 // waiting in the slot above the text field until the human answers it.
 //
 // A card never takes the keyboard by itself. While it waits, the text field
-// keeps the focus and the card's buttons are greyed out; /decision (or a
-// click) moves the focus to the card. Only one card waits at a time: a new
+// keeps the focus and the card's buttons are greyed out; Tab, /decision or
+// a click moves the focus to the card. Only one card waits at a time: a new
 // one replaces it.
 
 // cardKind is what a card proposes.
@@ -130,9 +130,13 @@ func (m Model) cardView(rows int) ui.Card {
 }
 
 // cardKey handles a key while the card has the focus: ←/→ choose, Enter
-// confirms, Esc (or Tab) goes back to the text field, whose half-typed
-// text was never touched.
+// confirms, Esc goes back to the text field, whose half-typed text was
+// never touched, Tab moves on to the next pane, and "/" opens the menu.
 func (m Model) cardKey(k tea.KeyMsg) (Model, tea.Cmd) {
+	// As in the panes, "/" opens the menu.
+	if m, ok := m.slashOpensMenu(k); ok {
+		return m, nil
+	}
 	switch k.Type {
 	case tea.KeyLeft:
 		m.card.sel = buttonAgree
@@ -140,8 +144,10 @@ func (m Model) cardKey(k tea.KeyMsg) (Model, tea.Cmd) {
 		m.card.sel = buttonNo
 	case tea.KeyEnter:
 		return m.confirmCard()
-	case tea.KeyEsc, tea.KeyTab:
+	case tea.KeyEsc:
 		m.focus = focusInput
+	case tea.KeyTab:
+		m.focus = m.nextFocus()
 	}
 	return m, nil
 }

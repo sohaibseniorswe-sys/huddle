@@ -22,7 +22,7 @@
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ DECISION                                                                     /decision to answer │
+│ DECISION                                                              tab or /decision to answer │
 │ Use MapLibre with OpenStreetMap tiles for #65 now (no API key). Add a follow-up issue in         │
 │ Milestone 4 to switch to Mapbox once the token exists.                                           │
 │ Reason: no Mapbox token yet; MapLibre keeps #65's acceptance criteria.                           │
@@ -31,4 +31,4 @@
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ companion › Is MapLibre as fast as Mapbox on mobile?                                             │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- enter send  ·  /decision answer the decision  ·  tab switch pane  ·  / commands                    
+ enter send  ·  tab answer the decision  ·  / commands  ·  ctrl+c quit                              

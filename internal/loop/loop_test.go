@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/sohaibseniorswe-sys/huddle/internal/activity"
+	"github.com/sohaibseniorswe-sys/huddle/internal/agents"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
 )
@@ -104,12 +105,32 @@ func newEnv(t *testing.T, labels ...string) *env {
 		Control:   gh.Control{Client: e.gh, Repo: testRepo, Number: controlNo},
 		Milestone: "Sandbox M1",
 		Agents:    e.agents,
+		Team:      defaultTeam(),
 		Sessions:  e.sessions,
 		Clock:     e.clock,
 		Report:    &recorder{plain: PlainReporter{Out: e.out}},
 		Controls:  &Controls{},
 	}
 	return e
+}
+
+// defaultTeam is Huddle's default: Codex as the Dev, Claude Code as the PM
+// and the companion.
+func defaultTeam() agents.Team {
+	return agents.Team{
+		Dev:       agents.Choice{CLI: agents.Codex()},
+		PM:        agents.Choice{CLI: agents.Claude()},
+		Companion: agents.Choice{CLI: agents.Claude()},
+	}
+}
+
+// swappedTeam has Claude Code as the Dev and Codex as the PM.
+func swappedTeam() agents.Team {
+	return agents.Team{
+		Dev:       agents.Choice{CLI: agents.Claude(), Model: "sonnet", Effort: "high"},
+		PM:        agents.Choice{CLI: agents.Codex(), Model: "gpt-6.1-sol", Effort: "xhigh"},
+		Companion: agents.Choice{CLI: agents.Codex()},
+	}
 }
 
 // recorder is a Reporter that prints like --plain and also keeps every
@@ -784,4 +805,51 @@ func TestControlsWake(t *testing.T) {
 		t.Error("Resume did not wake the loop or did not clear the pause")
 	}
 	cancel()
+}
+
+// TestSwappedRoles runs a Dev turn and a PM turn with Claude Code as the
+// Dev and Codex as the PM: the prompts, Huddle's lines and its comments
+// name the tool that really plays each role, and a Codex usage message
+// counts for the PM.
+func TestSwappedRoles(t *testing.T) {
+	e := newEnv(t, gh.StateDevReady)
+	e.loop.Team = swappedTeam()
+	e.agents.steps = []func(context.Context, call) Result{
+		// The Dev stops without a label: Huddle hands over to the PM.
+		func(context.Context, call) Result {
+			return Result{SessionID: "dev-1", FinalMessage: "Closed #1."}
+		},
+		// The PM (Codex) hits a usage limit, then finishes the milestone.
+		func(context.Context, call) Result {
+			return Result{ExitCode: 1, SessionID: "pm-1", Output: "ERROR: You’ve hit your usage limit. Try again later."}
+		},
+		func(context.Context, call) Result {
+			e.agentSets(gh.StateDone)
+			return Result{SessionID: "pm-1"}
+		},
+	}
+	if code := e.run(); code != ExitOK {
+		t.Fatalf("exit %d", code)
+	}
+	calls := e.agents.calls
+	if len(calls) != 3 || calls[0].role != session.Dev || calls[1].role != session.PM {
+		t.Fatalf("calls = %+v", calls)
+	}
+	if !strings.Contains(calls[0].prompt, "YOUR ROLE: DEV\nYou are the Dev agent (Claude Code).") {
+		t.Errorf("Dev prompt does not name Claude Code:\n%s", calls[0].prompt)
+	}
+	if !strings.Contains(calls[1].prompt, "YOUR ROLE: PM\nYou are the PM agent (Codex).") {
+		t.Errorf("PM prompt does not name Codex:\n%s", calls[1].prompt)
+	}
+	out := e.out.String()
+	for _, want := range []string{"turn 1: Dev (Claude Code), fresh session", "turn 2: PM (Codex), fresh session", "PM (Codex) hit a usage limit"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q", want)
+		}
+	}
+	c := e.comments()
+	if len(c) != 2 || !strings.Contains(c[0], "the Dev (Claude Code) ended its turn") || !strings.Contains(c[0], "to the PM (Codex)") ||
+		!strings.Contains(c[1], "the PM (Codex) hit a usage limit") {
+		t.Errorf("comments = %q", c)
+	}
 }

@@ -20,15 +20,15 @@ func TestVisible(t *testing.T) {
 		want  []string
 	}{
 		{"agent running", State{AgentActive: true},
-			[]string{Status, Companion, Pause, Log, Quit}},
+			[]string{Status, Companion, Pause, Log, Settings, Quit}},
 		{"paused", State{AgentActive: true, Paused: true},
-			[]string{Status, Companion, Resume, Log, Quit}},
+			[]string{Status, Companion, Resume, Log, Settings, Quit}},
 		{"after talking to the companion", State{Conversation: true},
-			[]string{Status, Companion, Decide, Log, Quit}},
+			[]string{Status, Companion, Decide, Log, Settings, Quit}},
 		{"a card waits", State{Conversation: true, CardWaiting: true},
-			[]string{Status, Companion, Decide, Decision, Log, Quit}},
+			[]string{Status, Companion, Decide, Decision, Log, Settings, Quit}},
 		{"done, nothing to run", State{},
-			[]string{Status, Companion, Log, Quit}},
+			[]string{Status, Companion, Log, Settings, Quit}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := names(Visible(tt.state)); !slices.Equal(got, tt.want) {
@@ -53,8 +53,8 @@ func TestFilter(t *testing.T) {
 		typed string
 		want  []string
 	}{
-		{"/", []string{Status, Companion, Decide, Decision, Pause, Log, Quit}},
-		{"/s", []string{Status}},
+		{"/", []string{Status, Companion, Decide, Decision, Pause, Log, Settings, Quit}},
+		{"/s", []string{Status, Settings}},
 		{"/p", []string{Pause}},
 		{"/dec", []string{Decide, Decision}},
 		{"/decision", []string{Decision}},

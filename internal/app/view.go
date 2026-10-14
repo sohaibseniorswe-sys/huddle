@@ -59,6 +59,7 @@ func (m Model) sync() Model {
 	followChat := m.chatVP.AtBottom()
 	m.list.Width, m.list.Height = width, rows
 	m.statusVP.Width, m.statusVP.Height = width, rows
+	m.settingsVP.Width, m.settingsVP.Height = width, rows
 	m.log.vp.Width, m.log.vp.Height = width, rows
 	m.chatVP.Width, m.chatVP.Height = width, max(l.companionRows-ui.PaneChromeRows, 1)
 	// The text field scrolls sideways once the text is wider than this.
@@ -69,6 +70,7 @@ func (m Model) sync() Model {
 	m, list = m.listContent(width)
 	m.list.SetContent(list)
 	m.statusVP.SetContent(m.statusContent())
+	m.settingsVP.SetContent(m.settings)
 	m.log.vp.SetContent(m.log.content(width))
 	m.chatVP.SetContent(m.chatContent(width))
 	if followList {
@@ -109,6 +111,9 @@ func (m Model) activitySlot(rows int) string {
 	case viewLog:
 		p.Title, p.Hint, p.Accent = m.log.title(), "[ ] prev/next run · esc: back", ui.Purple
 		p.Body = m.log.vp.View()
+	case viewSettings:
+		p.Title, p.Hint, p.Accent = "Settings", "esc: back to activity", ui.Purple
+		p.Body = m.settingsVP.View()
 	}
 	return p.Render()
 }
@@ -145,9 +150,9 @@ func (m Model) helpLine() string {
 	case m.focus == focusMenu:
 		pairs = []string{"↑/↓", "choose", "tab", "complete", "enter", "run", "esc", "close menu"}
 	case m.focus == focusCard:
-		pairs = []string{"←/→", "choose", "enter", "confirm", "esc", "back to typing"}
+		pairs = []string{"←/→", "choose", "enter", "confirm", "tab", "next pane", "esc", "back to typing"}
 	case m.focus == focusInput && m.card.kind != cardNone:
-		pairs = []string{"enter", "send", "/decision", "answer the " + m.card.noun(), "tab", "switch pane", "/", "commands"}
+		pairs = []string{"enter", "send", "tab", "answer the " + m.card.noun(), "/", "commands", "ctrl+c", "quit"}
 	case m.focus == focusInput:
 		pairs = []string{"enter", "send", "/", "commands", "tab", "switch pane", "ctrl+c", "quit"}
 	case m.focus == focusCompanion:
@@ -158,6 +163,8 @@ func (m Model) helpLine() string {
 		pairs = []string{"esc", "back", "pgup/pgdn", "scroll", "/", "commands", "tab", "switch pane"}
 	case m.view == viewLog:
 		pairs = []string{"pgup/pgdn", "scroll", "[ ]", "prev/next run", "g/G", "start/end", "esc", "back"}
+	case m.view == viewSettings:
+		pairs = []string{"esc", "back", "/", "commands", "ctrl+c", "quit"}
 	default:
 		pairs = []string{"↑/↓", "select line", "pgup/pgdn", "scroll", "tab", "switch pane", "esc", "back to typing"}
 	}

@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/sohaibseniorswe-sys/huddle/internal/activity"
+	"github.com/sohaibseniorswe-sys/huddle/internal/agents"
 	"github.com/sohaibseniorswe-sys/huddle/internal/app"
 	"github.com/sohaibseniorswe-sys/huddle/internal/checks"
+	"github.com/sohaibseniorswe-sys/huddle/internal/config"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
@@ -82,7 +84,7 @@ func testDeps(t *testing.T, dir string, env map[string]string, stdin string) (de
 				return `{"loggedIn":true,"authMethod":"claude.ai","apiProvider":"firstParty"}`, "", nil
 			},
 		},
-		runAgents: func(string, string, io.Writer) loop.Agents { return noAgents{t} },
+		runAgents: func(string, string, agents.Team, io.Writer) loop.Agents { return noAgents{t} },
 		clock:     stopClock{},
 		// The tests never open the full-screen UI: this stand-in runs the
 		// loop with plain output instead.
@@ -225,7 +227,10 @@ func TestStartupYesOnceRunsOneTurn(t *testing.T) {
 	fake.Issues[0].Labels = append(fake.Issues[0].Labels, gh.StateDevReady)
 	agent := &fakeAgent{gh: fake, label: gh.StatePMReady}
 	var gotDir, gotHome string
-	d.runAgents = func(dir, home string, _ io.Writer) loop.Agents { gotDir, gotHome = dir, home; return agent }
+	d.runAgents = func(dir, home string, _ agents.Team, _ io.Writer) loop.Agents {
+		gotDir, gotHome = dir, home
+		return agent
+	}
 	if code := run(context.Background(), []string{"--repo", sandbox, "--yes", "--once"}, d); code != 0 {
 		t.Fatalf("exit %d, stderr: %s", code, stderr.String())
 	}
@@ -306,7 +311,7 @@ func TestRunScreenOrPlain(t *testing.T) {
 			dir := gitRepo(t, "https://github.com/"+sandbox)
 			d, stdout, _ := testDeps(t, dir, nil, "")
 			var stream io.Writer = &bytes.Buffer{} // anything but nil
-			d.runAgents = func(_, _ string, s io.Writer) loop.Agents { stream = s; return noAgents{t} }
+			d.runAgents = func(_, _ string, _ agents.Team, s io.Writer) loop.Agents { stream = s; return noAgents{t} }
 			var cfg app.Config
 			screen := false
 			d.runUI = func(_ context.Context, c app.Config, _ *loop.Loop, _ io.Writer) int {
@@ -335,5 +340,65 @@ func TestRunScreenOrPlain(t *testing.T) {
 				t.Errorf("run screen config = %+v", cfg)
 			}
 		})
+	}
+}
+
+// TestSettingsFileChoosesTheAgents runs one turn with a settings file that
+// swaps the roles: the loop's agents get the team from the file, and only
+// the CLIs in use are checked.
+func TestSettingsFileChoosesTheAgents(t *testing.T) {
+	dir := gitRepo(t, "https://github.com/"+sandbox)
+	d, stdout, stderr := testDeps(t, dir, nil, "")
+	home, _ := d.lookupEnv("HOME")
+	c := config.Default(sandbox)
+	c.Agents.Dev = config.Agent{CLI: "claude", Model: "sonnet", Effort: "high"}
+	c.Agents.PM = config.Agent{CLI: "claude", Model: "opus"}
+	if err := config.Save(home, c); err != nil {
+		t.Fatal(err)
+	}
+	var checked []string
+	d.agents.LookPath = func(bin string) (string, error) {
+		checked = append(checked, bin)
+		return "/bin/true", nil
+	}
+	fake := d.gh.(*gh.Fake)
+	fake.Issues[0].Labels = append(fake.Issues[0].Labels, gh.StateDevReady)
+	agent := &fakeAgent{gh: fake, label: gh.StatePMReady}
+	var team agents.Team
+	d.runAgents = func(_, _ string, t agents.Team, _ io.Writer) loop.Agents { team = t; return agent }
+
+	if code := run(context.Background(), []string{"--repo", sandbox, "--yes", "--once", "--plain"}, d); code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr.String())
+	}
+	if team.Dev.CLI.ID != "claude" || team.Dev.Model != "sonnet" || team.Dev.Effort != "high" || team.PM.Model != "opus" {
+		t.Errorf("team = %+v", team)
+	}
+	if strings.Join(checked, ",") != "claude" {
+		t.Errorf("checked CLIs %v, want only claude: codex plays no role", checked)
+	}
+	for _, want := range []string{"✔ settings ~/.huddle/projects/sohaibseniorswe-sys_huddle-sandbox.yaml",
+		"Dev: Claude Code · sonnet · high; PM: Claude Code · opus · CLI default effort",
+		"turn 1: Dev (Claude Code), fresh session"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("output lacks %q:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestInvalidSettingsStopTheStart(t *testing.T) {
+	dir := gitRepo(t, "https://github.com/"+sandbox)
+	d, _, stderr := testDeps(t, dir, nil, "")
+	home, _ := d.lookupEnv("HOME")
+	c := config.Default(sandbox)
+	c.Agents.PM.Effort = "none" // a Codex effort, not Claude Code's
+	if err := config.Save(home, c); err != nil {
+		t.Fatal(err)
+	}
+	d.runAgents = func(string, string, agents.Team, io.Writer) loop.Agents { return noAgents{t} }
+	if code := run(context.Background(), []string{"--repo", sandbox, "--yes"}, d); code != 1 {
+		t.Fatalf("exit %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), `agents.pm.effort: "none" is not a Claude Code effort`) {
+		t.Errorf("stderr = %q", stderr.String())
 	}
 }

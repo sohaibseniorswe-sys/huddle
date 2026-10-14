@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/sohaibseniorswe-sys/huddle/internal/activity"
+	"github.com/sohaibseniorswe-sys/huddle/internal/agents"
 	"github.com/sohaibseniorswe-sys/huddle/internal/runner"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
 )
@@ -28,45 +29,55 @@ func (RealClock) Sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// CLIAgents runs the real agent CLIs (section 6) in the repo root, logging
-// their output under Home/.huddle/logs. While an agent runs, its output is
-// turned into Activity events (see package activity).
+// CLIAgents runs the real agent CLIs in the repo root, logging their
+// output under Home/.huddle/logs. Team says which CLI, model and effort
+// plays the Dev and the PM. While an agent runs, its output is turned into
+// Activity events (see package activity).
 type CLIAgents struct {
-	Dir    string    // repo root
-	Home   string    // home directory, for ~/.huddle/logs
-	Stream io.Writer // live raw output: os.Stdout with --plain, nil for the run screen
+	Dir    string      // repo root
+	Home   string      // home directory, for ~/.huddle/logs
+	Team   agents.Team // what plays each role
+	Stream io.Writer   // live raw output: os.Stdout with --plain, nil for the run screen
+}
+
+// lineParser turns an agent's output lines into Activity events. The
+// activity package has one per CLI.
+type lineParser interface {
+	Line(runner.Line)
+	Flush()
 }
 
 func (a CLIAgents) Run(ctx context.Context, role session.Role, sessionID, prompt string, turn int, events func(activity.Event)) (Result, error) {
+	choice := a.Team.For(role)
 	logPath := runner.LogPath(a.Home, time.Now(), turn, string(role))
 	lastMessage := strings.TrimSuffix(logPath, ".log") + ".last"
-	var spec runner.Spec
-	if role == session.PM {
-		spec = runner.PM(a.Dir, prompt, sessionID)
-	} else {
-		spec = runner.Dev(a.Dir, prompt, sessionID, lastMessage)
-	}
+	spec := agents.Command(role, choice, sessionID, lastMessage)
+	spec.Dir = a.Dir
+	spec.Stdin = prompt
 	spec.LogPath = logPath
 	spec.Stream = a.Stream
 
 	// The parser reads every line the runner writes to the log, while the
 	// agent runs, and reports the events it finds. Flush reports what is
 	// still open when the run ends.
-	if role == session.PM {
-		p := activity.NewClaude(logPath, events)
-		spec.OnLine = p.Line
-		defer p.Flush()
-	} else {
-		p := activity.NewCodex(logPath, events)
-		spec.OnLine = p.Line
-		defer p.Flush()
+	var p lineParser = activity.NewCodex(logPath, events)
+	if choice.CLI.ID == agents.ClaudeID {
+		p = activity.NewClaude(logPath, events)
 	}
+	spec.OnLine = p.Line
+	defer p.Flush()
 
 	res, err := runner.Run(ctx, spec)
 	if err != nil {
 		return Result{}, err
 	}
-	out := Result{ExitCode: res.ExitCode, Canceled: res.Canceled}
+	read := agents.Read(choice.CLI, res, lastMessage)
+	out := Result{
+		ExitCode:     res.ExitCode,
+		Canceled:     res.Canceled,
+		SessionID:    read.SessionID,
+		FinalMessage: read.Message,
+	}
 
 	// The full log is the most complete output; fall back to what the
 	// runner kept in memory if it cannot be read. The log's time stamps are
@@ -75,17 +86,10 @@ func (a CLIAgents) Run(ctx context.Context, role session.Role, sessionID, prompt
 	if data, err := os.ReadFile(logPath); err == nil {
 		full = runner.StripStamps(string(data))
 	}
-	if role == session.PM {
-		if env, err := runner.ParseClaude(res.Stdout); err == nil {
-			out.SessionID = env.SessionID
-		}
-		out.FinalMessage = runner.ClaudeFinalMessage(res)
+	out.Output = full + "\n" + out.FinalMessage
+	if choice.CLI.ID == agents.ClaudeID {
 		// The envelope goes last, where ClaudeUsageLimit looks for it.
-		out.Output = full + "\n" + out.FinalMessage + "\n" + strings.TrimSpace(res.Stdout)
-	} else {
-		out.SessionID = runner.CodexSessionID(res.Head)
-		out.FinalMessage = runner.CodexFinalMessage(lastMessage, res)
-		out.Output = full + "\n" + out.FinalMessage
+		out.Output += "\n" + strings.TrimSpace(res.Stdout)
 	}
 	return out, nil
 }

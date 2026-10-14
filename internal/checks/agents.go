@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"strings"
 )
 
@@ -42,30 +43,61 @@ func ExecRun(ctx context.Context, name string, args ...string) (string, string, 
 	return stdout.String(), stderr.String(), err
 }
 
-// AgentCLIs checks that codex and claude are installed and logged in with a
-// subscription rather than an API key.
+// AgentCLIs checks that the agent CLIs a project uses are installed and
+// logged in with a subscription rather than an API key.
 type AgentCLIs struct {
 	LookPath func(string) (string, error) // normally exec.LookPath
 	Run      RunFunc                      // normally ExecRun
 }
 
-// Check runs all agent CLI checks.
-func (a AgentCLIs) Check(ctx context.Context) error {
-	for _, bin := range []string{"codex", "claude"} {
+// versionRe finds a version number in a CLI's --version output:
+// "codex-cli 0.160.0" or "2.1.299 (Claude Code)".
+var versionRe = regexp.MustCompile(`\d+\.\d+\.\d+`)
+
+// Check runs all agent CLI checks for the CLIs named in bins ("codex",
+// "claude"), which are the ones the project's settings use. It returns
+// each CLI's installed version, keyed by its name, for /settings; a version
+// that cannot be read is "", which is not an error.
+func (a AgentCLIs) Check(ctx context.Context, bins []string) (map[string]string, error) {
+	versions := map[string]string{}
+	for _, bin := range bins {
 		if _, err := a.LookPath(bin); err != nil {
-			return fmt.Errorf("%s not found on PATH", bin)
+			return nil, fmt.Errorf("%s not found on PATH", bin)
+		}
+		var err error
+		switch bin {
+		case "codex":
+			err = a.checkCodex(ctx)
+		case "claude":
+			err = a.checkClaude(ctx)
+		default:
+			err = fmt.Errorf("unknown agent CLI %q", bin)
+		}
+		if err != nil {
+			return nil, err
+		}
+		// The version is only shown, so a failure here is not worth
+		// stopping for.
+		out, _, verr := a.Run(ctx, bin, "--version")
+		if verr == nil {
+			versions[bin] = versionRe.FindString(out)
 		}
 	}
+	return versions, nil
+}
 
+// checkCodex checks codex's login.
+func (a AgentCLIs) checkCodex(ctx context.Context) error {
 	stdout, stderr, err := a.Run(ctx, "codex", "login", "status")
 	if err != nil {
 		return fmt.Errorf("codex is not logged in (run `codex login`): %s", firstLine(stdout+stderr, err))
 	}
-	if err := CheckCodexLogin(stdout + stderr); err != nil {
-		return err
-	}
+	return CheckCodexLogin(stdout + stderr)
+}
 
-	stdout, stderr, err = a.Run(ctx, "claude", "auth", "status", "--json")
+// checkClaude checks claude's login.
+func (a AgentCLIs) checkClaude(ctx context.Context) error {
+	stdout, stderr, err := a.Run(ctx, "claude", "auth", "status", "--json")
 	if err != nil {
 		return fmt.Errorf("claude is not logged in (run `claude auth login`): %s", firstLine(stdout+stderr, err))
 	}

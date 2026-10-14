@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sohaibseniorswe-sys/huddle/internal/agents"
 	"github.com/sohaibseniorswe-sys/huddle/internal/runner"
 )
 
@@ -193,7 +194,7 @@ func (c *Claude) Line(l runner.Line) {
 	if !strings.HasPrefix(l.Text, "{") {
 		return
 	}
-	env, err := runner.ParseClaude(l.Text)
+	env, err := agents.ParseClaude(l.Text)
 	if err != nil || strings.TrimSpace(env.Result) == "" {
 		return // not the envelope; the raw log still has the line
 	}
