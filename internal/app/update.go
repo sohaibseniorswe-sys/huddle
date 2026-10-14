@@ -218,6 +218,8 @@ func (m Model) activityKey(k tea.KeyMsg) Model {
 		return m.listKey(k)
 	case viewStatus:
 		scroll(&m.statusVP, k)
+	case viewSettings:
+		scroll(&m.settingsVP, k)
 	case viewLog:
 		m = m.logKey(k)
 	}
@@ -251,10 +253,17 @@ func (m Model) closeMenu() Model {
 }
 
 // nextFocus is where Tab moves the keyboard from the focused element:
-// text field → Activity → Companion (when open) → text field.
+// text field → card (while one waits) → Activity → Companion (when open)
+// → text field. The card comes first, so one Tab from the text field
+// reaches it; the half-typed text stays in the field meanwhile.
 func (m Model) nextFocus() focus {
 	switch m.focus {
 	case focusInput:
+		if m.card.kind != cardNone {
+			return focusCard
+		}
+		return focusActivity
+	case focusCard:
 		return focusActivity
 	case focusActivity:
 		if m.companionOpen {
@@ -373,6 +382,8 @@ func (m *Model) activityViewport() *viewport.Model {
 	switch m.view {
 	case viewStatus:
 		return &m.statusVP
+	case viewSettings:
+		return &m.settingsVP
 	case viewLog:
 		return &m.log.vp
 	default:

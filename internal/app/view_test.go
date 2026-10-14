@@ -9,7 +9,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
+	"github.com/sohaibseniorswe-sys/huddle/internal/agents"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
 )
@@ -159,5 +161,45 @@ func TestViewTooSmall(t *testing.T) {
 	f.send(sizeMsg(80, 24))
 	if got := f.m.View(); lipgloss.Height(got) != 24 {
 		t.Errorf("View() at 80 × 24 has %d rows", lipgloss.Height(got))
+	}
+}
+
+func TestViewSettings(t *testing.T) { // screen 09
+	f := newSettingsFixture(t)
+	f.keys("/settings", "enter")
+	if f.m.view != viewSettings || f.m.focus != focusActivity {
+		t.Fatalf("view %d, focus %d after /settings", f.m.view, f.m.focus)
+	}
+	checkGolden(t, "09-settings", f.m.View())
+
+	f.keys("esc")
+	if f.m.view != viewList {
+		t.Errorf("view %d after esc, want the Activity list", f.m.view)
+	}
+}
+
+func TestViewSwappedRoles(t *testing.T) {
+	f := newFixture(t)
+	f.m.cfg.Team = agents.Team{
+		Dev:       agents.Choice{CLI: agents.Claude()},
+		PM:        agents.Choice{CLI: agents.Codex()},
+		Companion: agents.Choice{CLI: agents.Codex()},
+	}
+	f.send(StatusMsg{Phase: loop.PhaseWorking, Role: session.Dev, Turn: 6, Since: at(22, 50)})
+	view := ansi.Strip(f.m.View())
+	for _, want := range []string{"Dev (Claude) working", "Usage Claude ok · Codex ok"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("screen lacks %q:\n%s", want, view)
+		}
+	}
+	// A usage wait shows on the CLI that plays the waiting role.
+	f.send(StatusMsg{Phase: loop.PhaseUsageWait, Role: session.PM, Turn: 6, Since: at(22, 55), Until: at(23, 45)})
+	if got := f.m.usage(true); got != "Claude Code ok · Codex waiting until 23:45" {
+		t.Errorf("usage = %q", got)
+	}
+	// One CLI playing both roles is named once.
+	f.m.cfg.Team.PM = agents.Choice{CLI: agents.Claude()}
+	if got := f.m.usage(false); got != "Claude waiting until 23:45" {
+		t.Errorf("usage with Claude Code in both roles = %q", got)
 	}
 }

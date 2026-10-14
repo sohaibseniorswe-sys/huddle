@@ -59,7 +59,7 @@ func TestSlashOpensTheMenuAndFilters(t *testing.T) {
 		t.Fatal("/ did not open the menu")
 	}
 	f.keys("s")
-	if got := names(f.m.menuItems()); !slices.Equal(got, []string{commands.Status}) {
+	if got := names(f.m.menuItems()); !slices.Equal(got, []string{commands.Status, commands.Settings}) {
 		t.Errorf("menu after /s = %v", got)
 	}
 	f.keys("backspace", "backspace")
@@ -112,11 +112,11 @@ func TestMenuShowsOnlyCommandsThatApply(t *testing.T) {
 		want   []string
 	}{
 		{"running", loop.Status{Phase: loop.PhaseWorking, Role: session.Dev}, false,
-			[]string{commands.Status, commands.Companion, commands.Pause, commands.Log, commands.Quit}},
+			[]string{commands.Status, commands.Companion, commands.Pause, commands.Log, commands.Settings, commands.Quit}},
 		{"paused", loop.Status{Phase: loop.PhasePaused, Role: session.PM}, true,
-			[]string{commands.Status, commands.Companion, commands.Resume, commands.Log, commands.Quit}},
+			[]string{commands.Status, commands.Companion, commands.Resume, commands.Log, commands.Settings, commands.Quit}},
 		{"human required", loop.Status{Phase: loop.PhaseHuman}, false,
-			[]string{commands.Status, commands.Companion, commands.Log, commands.Quit}},
+			[]string{commands.Status, commands.Companion, commands.Log, commands.Settings, commands.Quit}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newFixture(t)

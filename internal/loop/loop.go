@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"github.com/sohaibseniorswe-sys/huddle/internal/activity"
+	"github.com/sohaibseniorswe-sys/huddle/internal/agents"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/prompts"
-	"github.com/sohaibseniorswe-sys/huddle/internal/runner"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
 )
 
@@ -62,8 +62,8 @@ type Result struct {
 	SessionID    string // the run's session id; "" if none was found
 	FinalMessage string // the agent's final message, for the handoff comment
 	// Output is everything to check for usage-limit messages: the full log,
-	// the final message and, for Claude Code, its JSON envelope as the last
-	// line.
+	// the final message and, for Claude Code, its JSON envelope as the
+	// last line.
 	Output string
 }
 
@@ -82,6 +82,7 @@ type Loop struct {
 	Control   gh.Control
 	Milestone string
 	Agents    Agents
+	Team      agents.Team // what plays the Dev and the PM, for names and usage limits
 	Sessions  Sessions
 	Clock     Clock
 	Report    Reporter  // told about every step and status change
@@ -137,7 +138,7 @@ func (l *Loop) Run(ctx context.Context) int {
 			if l.Controls.Paused() {
 				if !pauseShown {
 					pauseShown = true
-					l.printf("Paused. The %s is next and starts when you /resume", roleName(role))
+					l.printf("Paused. The %s is next and starts when you /resume", l.roleName(role))
 				}
 				l.setStatus(PhasePaused, role, time.Time{})
 				break // leave the switch and wait below
@@ -148,7 +149,7 @@ func (l *Loop) Run(ctx context.Context) int {
 				l.printf("Resumed")
 			}
 			if state == gh.StateDevWorking || state == gh.StatePMWorking {
-				l.printf("%s found: a previous Huddle run was interrupted; restarting the %s", state, roleName(role))
+				l.printf("%s found: a previous Huddle run was interrupted; restarting the %s", state, l.roleName(role))
 			}
 			if err := l.turnFor(ctx, role); err != nil {
 				return l.interrupted()
@@ -233,7 +234,7 @@ func (l *Loop) turnFor(ctx context.Context, role session.Role) error {
 	if err := l.retry(ctx, "set "+working, func() error { return l.Control.SetState(ctx, working) }); err != nil {
 		return err
 	}
-	prompt, err := prompts.Launch(prompts.Role(role), l.Milestone, l.Control.Number)
+	prompt, err := prompts.Launch(prompts.Role(role), l.Team.For(role).CLI.Name, l.Milestone, l.Control.Number)
 	if err != nil {
 		return err // only for an unknown role
 	}
@@ -243,9 +244,9 @@ func (l *Loop) turnFor(ctx context.Context, role session.Role) error {
 	waitCommented := false // one usage-wait comment per wait
 	for {
 		if sessionID != "" {
-			l.printf("turn %d: %s, resuming session %s", l.turn, roleName(role), sessionID)
+			l.printf("turn %d: %s, resuming session %s", l.turn, l.roleName(role), sessionID)
 		} else {
-			l.printf("turn %d: %s, fresh session", l.turn, roleName(role))
+			l.printf("turn %d: %s, fresh session", l.turn, l.roleName(role))
 		}
 		res, err := l.Agents.Run(ctx, role, sessionID, prompt, l.turn, l.Report.Event)
 		if err != nil {
@@ -262,7 +263,7 @@ func (l *Loop) turnFor(ctx context.Context, role session.Role) error {
 			l.restore(ready)
 			return errInterrupted
 		}
-		l.printf("turn %d: %s exited with code %d", l.turn, roleName(role), res.ExitCode)
+		l.printf("turn %d: %s exited with code %d", l.turn, l.roleName(role), res.ExitCode)
 
 		// Read the label again. Normalising it removes our *-working label if
 		// the agent set another one next to it.
@@ -271,7 +272,7 @@ func (l *Loop) turnFor(ctx context.Context, role session.Role) error {
 			return err
 		}
 		if state != working && state != "" {
-			l.printf("%s set %s", roleName(role), state)
+			l.printf("%s set %s", l.roleName(role), state)
 			return nil
 		}
 
@@ -283,7 +284,7 @@ func (l *Loop) turnFor(ctx context.Context, role session.Role) error {
 			if !waitCommented {
 				waitCommented = true
 				if err := l.retry(ctx, "post the usage-wait comment", func() error {
-					return l.Control.Comment(ctx, usageWaitComment(role, usage))
+					return l.Control.Comment(ctx, l.usageWaitComment(role, usage))
 				}); err != nil {
 					return err
 				}
@@ -296,7 +297,7 @@ func (l *Loop) turnFor(ctx context.Context, role session.Role) error {
 			}
 			until := l.Clock.Now().Add(d)
 			l.printf("%s hit a usage limit (%s); waiting %s until %s, then resuming",
-				roleName(role), usage.Message, d.Round(time.Second), until.Format("2006-01-02 15:04 MST"))
+				l.roleName(role), usage.Message, d.Round(time.Second), until.Format("2006-01-02 15:04 MST"))
 			l.setStatus(PhaseUsageWait, role, until)
 			if l.Clock.Sleep(ctx, d) != nil {
 				l.restore(ready)
@@ -307,9 +308,9 @@ func (l *Loop) turnFor(ctx context.Context, role session.Role) error {
 			continue
 
 		case usage.Escalate:
-			l.printf("%s stopped by an account or credit error: %s", roleName(role), usage.Message)
+			l.printf("%s stopped by an account or credit error: %s", l.roleName(role), usage.Message)
 			if err := l.retry(ctx, "post the escalation comment", func() error {
-				return l.Control.Comment(ctx, escalateComment(role, usage))
+				return l.Control.Comment(ctx, l.escalateComment(role, usage))
 			}); err != nil {
 				return err
 			}
@@ -330,9 +331,9 @@ func (l *Loop) turnFor(ctx context.Context, role session.Role) error {
 
 		// Anti-stall: hand the turn to the other agent.
 		next := readyLabel(other(role))
-		l.printf("%s ended its turn without setting a label; handing over with %s", roleName(role), next)
+		l.printf("%s ended its turn without setting a label; handing over with %s", l.roleName(role), next)
 		if err := l.retry(ctx, "post the handoff comment", func() error {
-			return l.Control.Comment(ctx, handoffComment(role, res))
+			return l.Control.Comment(ctx, l.handoffComment(role, res))
 		}); err != nil {
 			return err
 		}
@@ -340,11 +341,10 @@ func (l *Loop) turnFor(ctx context.Context, role session.Role) error {
 	}
 }
 
-func (l *Loop) usageLimit(role session.Role, output string) runner.UsageLimit {
-	if role == session.PM {
-		return runner.ClaudeUsageLimit(output, l.Clock.Now())
-	}
-	return runner.CodexUsageLimit(output, l.Clock.Now())
+// usageLimit checks a run's output for a usage limit, with the messages of
+// the CLI that plays role.
+func (l *Loop) usageLimit(role session.Role, output string) agents.UsageLimit {
+	return agents.Usage(l.Team.For(role).CLI, output, l.Clock.Now())
 }
 
 // state reads the normalised state label, retrying on errors.
@@ -424,27 +424,27 @@ func commentKey(c gh.Comment, ok bool) string {
 	return c.URL + "\x00" + c.CreatedAt.String() + "\x00" + c.Body
 }
 
-func handoffComment(role session.Role, res Result) string {
+func (l *Loop) handoffComment(role session.Role, res Result) string {
 	msg := strings.TrimSpace(res.FinalMessage)
 	if msg == "" {
 		msg = "(no output)"
 	}
 	return fmt.Sprintf("%s\n**Huddle:** the %s ended its turn without setting a `state:*` label (exit code %d), so Huddle is handing the turn to the %s with `%s`.\n\nIts final output:\n\n%s\n",
-		handoffMarker(role), roleName(role), res.ExitCode, roleName(other(role)), readyLabel(other(role)), fence(msg))
+		handoffMarker(role), l.roleName(role), res.ExitCode, l.roleName(other(role)), readyLabel(other(role)), fence(msg))
 }
 
-func usageWaitComment(role session.Role, u runner.UsageLimit) string {
+func (l *Loop) usageWaitComment(role session.Role, u agents.UsageLimit) string {
 	reset := "The CLI gave no reset time, so Huddle retries every 15 minutes."
 	if !u.ResetAt.IsZero() {
-		reset = fmt.Sprintf("It resets at %s; Huddle resumes the %s a minute after that.", u.ResetAt.Format("2006-01-02 15:04 MST"), roleName(role))
+		reset = fmt.Sprintf("It resets at %s; Huddle resumes the %s a minute after that.", u.ResetAt.Format("2006-01-02 15:04 MST"), l.roleName(role))
 	}
 	return fmt.Sprintf("%s\n**Huddle:** the %s hit a usage limit. %s The turn stays with the %s; no handoff.\n\n%s\n",
-		usageWaitMarker(role), roleName(role), reset, roleName(role), fence(u.Message))
+		usageWaitMarker(role), l.roleName(role), reset, l.roleName(role), fence(u.Message))
 }
 
-func escalateComment(role session.Role, u runner.UsageLimit) string {
+func (l *Loop) escalateComment(role session.Role, u agents.UsageLimit) string {
 	return fmt.Sprintf("%s\n**Huddle:** the %s was stopped by an account or credit error that only the human can fix (no wait will clear it):\n\n%s\n\nFix the account, then set `%s` to resume the %s's session.\n",
-		escalateMarker(role), roleName(role), fence(u.Message), readyLabel(role), roleName(role))
+		escalateMarker(role), l.roleName(role), fence(u.Message), readyLabel(role), l.roleName(role))
 }
 
 // fence wraps s in a code fence longer than any run of backticks inside it.
@@ -462,11 +462,9 @@ func fence(s string) string {
 	return f + "\n" + s + "\n" + f
 }
 
-func roleName(role session.Role) string {
-	if role == session.PM {
-		return "PM (Claude Code)"
-	}
-	return "Dev (Codex)"
+// roleName names role with the CLI that plays it: "Dev (Codex)".
+func (l *Loop) roleName(role session.Role) string {
+	return l.Team.RoleTitle(role)
 }
 
 func other(role session.Role) session.Role {

@@ -22,7 +22,7 @@
 │                                                                                                  │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ ACTION                                                                       /decision to answer │
+│ ACTION                                                                tab or /decision to answer │
 │ Suggested action: pause after this turn                                                          │
 │   Agree      Not now                                                                             │
 │                                                                                                  │
@@ -31,4 +31,4 @@
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ companion › Type to talk to the companion, / for commands                                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
- enter send  ·  /decision answer the action  ·  tab switch pane  ·  / commands                      
+ enter send  ·  tab answer the action  ·  / commands  ·  ctrl+c quit                                

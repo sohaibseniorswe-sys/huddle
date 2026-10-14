@@ -54,6 +54,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/sohaibseniorswe-sys/huddle/internal/activity"
+	"github.com/sohaibseniorswe-sys/huddle/internal/agents"
 	"github.com/sohaibseniorswe-sys/huddle/internal/companion"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
@@ -88,10 +89,15 @@ type Config struct {
 	Controls *loop.Controls
 	// Stop cancels the loop's context: the running agent is killed and the
 	// loop puts its ready label back, then the loop ends.
-	Stop    context.CancelFunc
-	LogDir  string           // where the agents' raw logs are, ~/.huddle/logs
-	RepoDir string           // the repo's local clone; /log shows only its runs
-	Now     func() time.Time // the clock; time.Now outside tests
+	Stop context.CancelFunc
+	// Team is what plays each role, named in the badge, /status and
+	// /settings.
+	Team agents.Team
+	// Settings is what /settings shows besides the fields above.
+	Settings Settings
+	LogDir   string           // where the agents' raw logs are, ~/.huddle/logs
+	RepoDir  string           // the repo's local clone; /log shows only its runs
+	Now      func() time.Time // the clock; time.Now outside tests
 
 	// Companion answers the human; nil means there is none.
 	Companion Companion
@@ -121,10 +127,11 @@ const (
 type view int
 
 const (
-	viewList   view = iota // Activity events, newest at the bottom
-	viewSelect             // the same list with one line highlighted
-	viewStatus             // /status
-	viewLog                // /log: an agent's raw output
+	viewList     view = iota // Activity events, newest at the bottom
+	viewSelect               // the same list with one line highlighted
+	viewStatus               // /status
+	viewLog                  // /log: an agent's raw output
+	viewSettings             // /settings, read-only
 )
 
 // Model is the run screen's state. See the package comment for how Bubble
@@ -151,7 +158,11 @@ type Model struct {
 	selected   int            // the highlighted event in viewSelect
 	list       viewport.Model // scrolls the event list
 	statusVP   viewport.Model // scrolls the /status view
-	log        logView        // the /log view
+	settingsVP viewport.Model // scrolls the /settings view
+	// settings is the /settings view's text, drawn when it opens: it
+	// reads the logs, which Update must not do on every message.
+	settings string
+	log      logView // the /log view
 
 	status loop.Status // what the loop last reported
 	paused bool        // /pause was used and no /resume yet
@@ -192,17 +203,18 @@ func New(cfg Config) Model {
 
 	now := cfg.Now()
 	m := Model{
-		cfg:      cfg,
-		now:      now,
-		started:  now,
-		input:    in,
-		status:   loop.Status{Phase: loop.PhaseStarting, Since: now},
-		fetching: true, // Init starts the first fetch
-		log:      logView{vp: viewport.New(0, 0)},
-		list:     viewport.New(0, 0),
-		statusVP: viewport.New(0, 0),
-		chatVP:   viewport.New(0, 0),
-		spin:     spin,
+		cfg:        cfg,
+		now:        now,
+		started:    now,
+		input:      in,
+		status:     loop.Status{Phase: loop.PhaseStarting, Since: now},
+		fetching:   true, // Init starts the first fetch
+		log:        logView{vp: viewport.New(0, 0)},
+		list:       viewport.New(0, 0),
+		statusVP:   viewport.New(0, 0),
+		settingsVP: viewport.New(0, 0),
+		chatVP:     viewport.New(0, 0),
+		spin:       spin,
 	}
 	// The conversation of an earlier Huddle on this control issue comes
 	// back. Reading a small file here, before the screen starts, is fine.

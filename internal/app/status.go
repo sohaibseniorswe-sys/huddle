@@ -20,12 +20,13 @@ const statusKeyWidth = 14
 // milestone is scaled down to it.
 const maxIssueBar = 30
 
-// roleTitle names a role with its agent, for the badge and /status.
-func roleTitle(r session.Role) string {
+// roleTitle names a role with the CLI that plays it, short enough for the
+// badge: "Dev (Codex)", "PM (Claude)".
+func (m Model) roleTitle(r session.Role) string {
 	if r == session.PM {
-		return "PM (Claude)"
+		return "PM (" + m.cfg.Team.PM.CLI.ShortName() + ")"
 	}
-	return "Dev (Codex)"
+	return "Dev (" + m.cfg.Team.Dev.CLI.ShortName() + ")"
 }
 
 // roleShort names a role alone.
@@ -43,7 +44,7 @@ func (m Model) badge() (string, lipgloss.Color) {
 	case m.quitting:
 		return "Stopping", ui.Amber
 	case s.Phase == loop.PhaseWorking:
-		return roleTitle(s.Role) + " working", ui.Blue
+		return m.roleTitle(s.Role) + " working", ui.Blue
 	case s.Phase == loop.PhaseUsageWait:
 		return "Waiting for usage reset · " + s.Until.Format("15:04"), ui.Amber
 	case s.Phase == loop.PhasePaused:
@@ -64,7 +65,7 @@ func (m Model) infoParts() []string {
 		kv("Issues", ui.Plain.Render(m.issuesShort())),
 		kv("PRs", ui.Plain.Render(m.prsShort())),
 		kv("CI", m.mainCI()),
-		kv("Usage", ui.Plain.Render(m.usage("Claude"))),
+		kv("Usage", ui.Plain.Render(m.usage(false))),
 		kv("Elapsed", ui.Plain.Render(elapsed(m.now.Sub(m.started)))),
 	}
 }
@@ -112,19 +113,31 @@ func (m Model) mainCI() string {
 	return ui.Plain.Render(ci)
 }
 
-// usage is each agent's usage state: "Codex ok · Claude ok", or with the
-// time an agent waits for. claudeName is how to name Claude Code.
-func (m Model) usage(claudeName string) string {
-	codex, claude := "Codex ok", claudeName+" ok"
-	if m.status.Phase == loop.PhaseUsageWait {
-		wait := " waiting until " + m.status.Until.Format("15:04")
-		if m.status.Role == session.PM {
-			claude = claudeName + wait
-		} else {
-			codex = "Codex" + wait
+// usage is each working CLI's usage state, "Codex ok · Claude ok", or
+// with the time a CLI waits for. Usage limits belong to a CLI's account,
+// so a CLI that plays both the Dev and the PM is named once. long names
+// the CLIs in full ("Claude Code"), for /status.
+func (m Model) usage(long bool) string {
+	var parts []string
+	seen := map[string]bool{}
+	for _, role := range []session.Role{session.Dev, session.PM} {
+		cli := m.cfg.Team.For(role).CLI
+		if seen[cli.ID] {
+			continue
 		}
+		seen[cli.ID] = true
+		name := cli.ShortName()
+		if long {
+			name = cli.Name
+		}
+		state := " ok"
+		waiting := m.status.Phase == loop.PhaseUsageWait && m.cfg.Team.For(m.status.Role).CLI.ID == cli.ID
+		if waiting {
+			state = " waiting until " + m.status.Until.Format("15:04")
+		}
+		parts = append(parts, name+state)
 	}
-	return codex + " · " + claude
+	return strings.Join(parts, " · ")
 }
 
 // elapsed formats a duration as "2h14m" or "14m".
@@ -141,7 +154,7 @@ func elapsed(d time.Duration) string {
 func (m Model) statusContent() string {
 	kv := func(k, v string) string { return ui.Muted.Width(statusKeyWidth).Render(k) + v }
 	plain := ui.Plain.Render
-	usage := m.usage("Claude Code")
+	usage := m.usage(true)
 	if m.status.Phase != loop.PhaseUsageWait {
 		usage += " · no waits"
 	}
@@ -171,11 +184,11 @@ func (m Model) turnText() string {
 	turn := fmt.Sprintf("turn %d", s.Turn)
 	switch s.Phase {
 	case loop.PhaseWorking:
-		return fmt.Sprintf("%s · working %s · %s", roleTitle(s.Role), elapsed(m.now.Sub(s.Since)), turn)
+		return fmt.Sprintf("%s · working %s · %s", m.roleTitle(s.Role), elapsed(m.now.Sub(s.Since)), turn)
 	case loop.PhaseUsageWait:
-		return fmt.Sprintf("%s · waiting for its usage limit until %s · %s", roleTitle(s.Role), s.Until.Format("15:04"), turn)
+		return fmt.Sprintf("%s · waiting for its usage limit until %s · %s", m.roleTitle(s.Role), s.Until.Format("15:04"), turn)
 	case loop.PhasePaused:
-		return fmt.Sprintf("Paused · %s next · %s", roleTitle(s.Role), turn)
+		return fmt.Sprintf("Paused · %s next · %s", m.roleTitle(s.Role), turn)
 	case loop.PhaseHuman:
 		return fmt.Sprintf("Waiting for you since %s · %s", s.Since.Format("15:04"), turn)
 	case loop.PhaseNoLabel:

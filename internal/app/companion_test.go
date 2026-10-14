@@ -256,6 +256,55 @@ func TestCardFocus(t *testing.T) {
 	}
 }
 
+// TestTabReachesTheCardFirst checks the Tab cycle while a card waits:
+// text field → card → Activity → Companion → text field, with the
+// half-typed text kept all the way round.
+func TestTabReachesTheCardFirst(t *testing.T) {
+	f := newDecisionFixture(t)
+	const typed = "Is MapLibre as fast as Mapbox on mobile?"
+	want := []focus{focusCard, focusActivity, focusCompanion, focusInput}
+	for i, w := range want {
+		f.keys("tab")
+		if f.m.focus != w {
+			t.Fatalf("after %d tabs: focus %d, want %d", i+1, f.m.focus, w)
+		}
+		if f.m.input.Value() != typed {
+			t.Fatalf("after %d tabs the text field holds %q", i+1, f.m.input.Value())
+		}
+	}
+
+	// One Tab, then the card's keys: → Keep talking, Esc back to typing.
+	f.keys("tab", "right")
+	if f.m.card.sel != buttonNo {
+		t.Error("→ after one Tab did not choose Keep talking")
+	}
+	f.keys("esc")
+	if f.m.focus != focusInput || f.m.input.Value() != typed {
+		t.Errorf("after esc: focus %d, text field %q", f.m.focus, f.m.input.Value())
+	}
+	if got := f.helpText(); !strings.Contains(got, "tab answer the decision") {
+		t.Errorf("help line %q does not say Tab answers the card", got)
+	}
+
+	// With no card, Tab goes from the text field to Activity.
+	f.m = f.m.clearCard()
+	f.keys("tab")
+	if f.m.focus != focusActivity {
+		t.Errorf("focus %d without a card, want Activity", f.m.focus)
+	}
+}
+
+// TestDecisionCommandWithAnEmptyTextField checks that /decision still
+// focuses the card when typed straight into the empty text field.
+func TestDecisionCommandWithAnEmptyTextField(t *testing.T) {
+	f := newDecisionFixture(t)
+	f.m.input.SetValue("")
+	f.keys("/decision", "enter")
+	if f.m.focus != focusCard {
+		t.Errorf("focus %d after /decision, want the card", f.m.focus)
+	}
+}
+
 func TestEnterInTheTextFieldSendsEvenWithACard(t *testing.T) {
 	f := newDecisionFixture(t)
 	posted := len(f.gh.IssueComments[58])

@@ -1,6 +1,8 @@
-// Command huddle runs a Dev agent (Codex) and a PM agent (Claude Code) in
-// turns through a GitHub milestone, with a companion agent the human talks
-// to on the run screen. See MVP_PLAN.md and docs/v3.
+// Command huddle runs a Dev agent and a PM agent in turns through a GitHub
+// milestone, with a companion agent the human talks to on the run screen.
+// Each role is played by Codex or Claude Code, as the project's settings
+// file says (package config); by default Codex is the Dev and Claude Code
+// the PM. See MVP_PLAN.md and docs/v3.
 //
 // After the startup checks it shows the run screen (package app), or with
 // --plain prints the loop's lines to stdout as Huddle v1 did.
@@ -16,13 +18,16 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
 
+	"github.com/sohaibseniorswe-sys/huddle/internal/agents"
 	"github.com/sohaibseniorswe-sys/huddle/internal/app"
 	"github.com/sohaibseniorswe-sys/huddle/internal/checks"
 	"github.com/sohaibseniorswe-sys/huddle/internal/companion"
+	"github.com/sohaibseniorswe-sys/huddle/internal/config"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gitx"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
@@ -43,8 +48,9 @@ type deps struct {
 	gh        gh.Client
 	agents    checks.AgentCLIs
 	// runAgents returns the agents for the watch loop, run in repo root
-	// dir. stream receives their raw output (nil for the run screen).
-	runAgents func(dir, home string, stream io.Writer) loop.Agents
+	// dir and played as team says. stream receives their raw output (nil
+	// for the run screen).
+	runAgents func(dir, home string, team agents.Team, stream io.Writer) loop.Agents
 	clock     loop.Clock
 	// runUI shows the run screen while l runs and returns l's exit code.
 	runUI func(ctx context.Context, cfg app.Config, l *loop.Loop, stderr io.Writer) int
@@ -61,8 +67,8 @@ func main() {
 		lookupEnv: os.LookupEnv,
 		gh:        gh.CLI{},
 		agents:    checks.AgentCLIs{LookPath: exec.LookPath, Run: checks.ExecRun},
-		runAgents: func(dir, home string, stream io.Writer) loop.Agents {
-			return loop.CLIAgents{Dir: dir, Home: home, Stream: stream}
+		runAgents: func(dir, home string, team agents.Team, stream io.Writer) loop.Agents {
+			return loop.CLIAgents{Dir: dir, Home: home, Team: team, Stream: stream}
 		},
 		clock: loop.RealClock{},
 		runUI: app.Run,
@@ -176,13 +182,38 @@ func run(ctx context.Context, args []string, d deps) int {
 		ok("gh logged in, repo access ok, labels ready")
 	}
 
-	// Check 6: agent CLIs with subscription logins.
-	if err := d.agents.Check(ctx); err != nil {
+	// Check 6: the project's settings: which CLI plays each role.
+	home, hasHome := d.lookupEnv("HOME")
+	if !hasHome || home == "" {
+		return fail(errors.New("HOME is not set"))
+	}
+	cfg, exists, err := config.Load(home, target)
+	if err != nil {
 		return fail(err)
 	}
-	ok("codex and claude installed with subscription logins, no API keys in env")
+	if err := cfg.Validate(); err != nil {
+		return fail(fmt.Errorf("settings %s: %w", tildePath(config.Path(home, target), d.lookupEnv), err))
+	}
+	team, err := cfg.Team()
+	if err != nil {
+		return fail(err) // Validate has checked the CLIs, so this does not happen
+	}
+	if exists {
+		ok("settings %s", tildePath(config.Path(home, target), d.lookupEnv))
+	} else {
+		ok("no settings file yet (huddle setup writes %s); using the defaults", tildePath(config.Path(home, target), d.lookupEnv))
+	}
+	ok("Dev: %s; PM: %s; companion: %s", team.Dev, team.PM, team.Companion)
 
-	// Check 7: the control issue.
+	// Check 7: the agent CLIs in use, with subscription logins.
+	bins := usedBinaries(team)
+	versions, err := d.agents.Check(ctx, bins)
+	if err != nil {
+		return fail(err)
+	}
+	ok("%s installed with subscription logins, no API keys in env", strings.Join(bins, " and "))
+
+	// Check 8: the control issue.
 	control, err := checks.FindControlIssue(ctx, d.gh, target)
 	if err != nil {
 		return fail(err)
@@ -193,19 +224,16 @@ func run(ctx context.Context, args []string, d deps) int {
 	}
 	ok("control issue #%d %q, milestone %q, state: %s", control.Number, control.Title, control.Milestone, state)
 
-	// Check 8: confirmation.
+	// Check 9: confirmation.
 	if !opts.yes && !checks.Confirm(d.stdin, d.stdout) {
 		fmt.Fprintln(d.stdout, "aborted")
 		return 1
 	}
 
-	home, hasHome := d.lookupEnv("HOME")
-	if !hasHome || home == "" {
-		return fail(errors.New("HOME is not set"))
-	}
 	l := &loop.Loop{
 		Control:   gh.Control{Client: d.gh, Repo: target, Number: control.Number},
 		Milestone: control.Milestone,
+		Team:      team,
 		Sessions:  session.New(home, target, control.Number),
 		Clock:     d.clock,
 		Once:      opts.once,
@@ -213,23 +241,35 @@ func run(ctx context.Context, args []string, d deps) int {
 
 	// --plain: the agents' raw output and Huddle's lines go to stdout.
 	if opts.plain {
-		l.Agents = d.runAgents(root, home, d.stdout)
+		l.Agents = d.runAgents(root, home, team, d.stdout)
 		l.Report = loop.PlainReporter{Out: d.stdout}
 		l.Controls = &loop.Controls{}
 		return l.Run(ctx)
 	}
 
 	// The run screen: nothing may write to the terminal but the screen.
-	// The companion runs on the PM's CLI (Claude Code) in the same clone.
-	l.Agents = d.runAgents(root, home, nil)
+	// The companion runs in the same clone, read-only.
+	l.Agents = d.runAgents(root, home, team, nil)
 	return d.runUI(ctx, app.Config{
 		Repo:      target,
 		Milestone: control.Milestone,
 		Control:   l.Control,
-		LogDir:    runner.LogDir(home),
-		RepoDir:   root,
-		Now:       time.Now,
+		Team:      team,
+		Settings: app.Settings{
+			Home:               home,
+			Path:               config.Path(home, target),
+			Exists:             exists,
+			Autonomy:           cfg.Autonomy,
+			CompanionFollowsPM: cfg.Agents.Companion.SameAsPM,
+			Versions:           versions,
+			Sessions:           session.New(home, target, control.Number),
+			CompanionSessions:  session.NewCompanion(home, target, control.Number),
+		},
+		LogDir:  runner.LogDir(home),
+		RepoDir: root,
+		Now:     time.Now,
 		Companion: companion.Agent{
+			Choice:    team.Companion,
 			Dir:       root,
 			Home:      home,
 			Milestone: control.Milestone,
@@ -239,6 +279,18 @@ func run(ctx context.Context, args []string, d deps) int {
 		},
 		History: companion.NewHistory(home, target, control.Number),
 	}, l, d.stderr)
+}
+
+// usedBinaries lists the CLIs that play a role in team, each once, in
+// role order: the ones the startup check must find.
+func usedBinaries(team agents.Team) []string {
+	var bins []string
+	for _, c := range []agents.Choice{team.Dev, team.PM, team.Companion} {
+		if !slices.Contains(bins, c.CLI.Binary) {
+			bins = append(bins, c.CLI.Binary)
+		}
+	}
+	return bins
 }
 
 // tildePath shortens a path under $HOME to start with "~".

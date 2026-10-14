@@ -14,7 +14,7 @@ var update = flag.Bool("update", false, "rewrite the golden files")
 func TestLaunchGolden(t *testing.T) {
 	for _, role := range []Role{Dev, PM} {
 		t.Run(string(role), func(t *testing.T) {
-			got, err := Launch(role, "V3", 58)
+			got, err := Launch(role, map[Role]string{Dev: "Codex", PM: "Claude Code"}[role], "V3", 58)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -37,7 +37,7 @@ func TestLaunchGolden(t *testing.T) {
 
 func TestLaunchFilled(t *testing.T) {
 	for _, role := range []Role{Dev, PM} {
-		got, err := Launch(role, "Sandbox M1", 3)
+		got, err := Launch(role, "Claude Code", "Sandbox M1", 3)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -45,7 +45,8 @@ func TestLaunchFilled(t *testing.T) {
 			t.Errorf("Launch(%s) has an unfilled placeholder:\n%s", role, got)
 		}
 		for _, want := range []string{`milestone "Sandbox M1"`, "Control issue #3 is", `--milestone "Sandbox M1"`,
-			"\n\nIt's your turn. Read control issue #3 and continue.\n"} {
+			"\n\nIt's your turn. Read control issue #3 and continue.\n",
+			"agent (Claude Code).\n"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("Launch(%s) missing %q", role, want)
 			}
@@ -54,7 +55,7 @@ func TestLaunchFilled(t *testing.T) {
 			t.Errorf("Launch(%s) does not start with the shared section", role)
 		}
 	}
-	if _, err := Launch("reviewer", "V3", 1); err == nil {
+	if _, err := Launch("reviewer", "Codex", "V3", 1); err == nil {
 		t.Error("Launch(unknown role) error = nil")
 	}
 }
@@ -80,10 +81,30 @@ func TestEmbeddedMatchesPlan(t *testing.T) {
 			t.Errorf("%s differs from MVP_PLAN.md section 9:\n got: %q\nwant: %q", embedded.name, embedded.text, blocks[i][1])
 		}
 	}
-	// The only placeholders are the two the plan names.
+	// The only placeholders are the three the plan names.
 	for _, m := range regexp.MustCompile(`\{\{[^}]*\}\}`).FindAllString(shared+dev+pm, -1) {
-		if m != "{{milestone}}" && m != "{{control_issue}}" {
+		if m != "{{milestone}}" && m != "{{control_issue}}" && m != "{{agent}}" {
 			t.Errorf("unexpected placeholder %s", m)
 		}
+	}
+}
+
+// TestPrinciplesNameRolesNotTools checks that the operating principles name
+// the roles only: either CLI can play either role, so a tool's name may
+// appear only where {{agent}} fills it in.
+func TestPrinciplesNameRolesNotTools(t *testing.T) {
+	for name, text := range map[string]string{"shared.md": shared, "dev.md": dev, "pm.md": pm} {
+		for _, tool := range []string{"Codex", "Claude"} {
+			if strings.Contains(text, tool) {
+				t.Errorf("%s names %s", name, tool)
+			}
+		}
+	}
+	got, err := Launch(Dev, "Claude Code", "V3", 58)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "YOUR ROLE: DEV\nYou are the Dev agent (Claude Code).\n") {
+		t.Errorf("Launch(Dev, Claude Code) does not say who plays the Dev:\n%s", got)
 	}
 }

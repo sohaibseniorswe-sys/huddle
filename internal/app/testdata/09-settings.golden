@@ -1,0 +1,34 @@
+ HUDDLE  palantir · Milestone 3 · control #58                                 ● Dev (Codex) working 
+ Issues 4/7 closed  ·  PRs #73 open  ·  CI green  ·  Usage Codex ok · Claude ok  ·  Elapsed 2h14m   
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Settings  ◆ focused                                                        esc: back to activity │
+│ ~/.huddle/projects/sohaibseniorswe-sys_palantir.yaml                                             │
+│                                                                                                  │
+│ Project                                                                                          │
+│   Repo            sohaibseniorswe-sys/palantir                                                   │
+│   Folder          /home/u/projects/palantir                                                      │
+│   Control issue   #58 · Milestone 3                                                              │
+│                                                                                                  │
+│ Agents                                                                                           │
+│   Dev             Codex 0.160.0 · signed in with ChatGPT                                         │
+│                   model CLI default (gpt-6.1-sol in the last run) · effort CLI default           │
+│   PM              Claude Code 2.1.299 · signed in with claude.ai                                 │
+│                   model opus (claude-opus-5-5 in the last run) · effort high                     │
+│   Companion       Claude Code (follows the PM)                                                   │
+│                                                                                                  │
+│ Autonomy                                                                                         │
+│   Level           8 · Autonomous  (used from v3.5)                                               │
+│                                                                                                  │
+│ Files                                                                                            │
+│   Logs            ~/.huddle/logs/  (2 runs of this repo)                                         │
+│   Sessions        Dev 01a1…f981 · PM 717c…02f5                                                   │
+│                                                                                                  │
+│ Read-only. To change settings, quit and run: huddle setup                                        │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ companion › Type to talk to the companion, / for commands                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ esc back  ·  / commands  ·  ctrl+c quit                                                            

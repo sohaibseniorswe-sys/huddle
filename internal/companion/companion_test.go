@@ -3,22 +3,34 @@ package companion
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/sohaibseniorswe-sys/huddle/internal/agents"
 	"github.com/sohaibseniorswe-sys/huddle/internal/runner"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
 )
 
 // fakeRuns plays the companion's CLI: each call takes the next result.
+// If play is set, each call runs the next function instead, which can
+// act like the CLI (write its last-message file, say).
 type fakeRuns struct {
 	results []runner.Result
+	play    []func(runner.Spec) runner.Result
 	specs   []runner.Spec
 }
 
 func (f *fakeRuns) run(_ context.Context, spec runner.Spec) (runner.Result, error) {
 	f.specs = append(f.specs, spec)
+	if len(f.play) > 0 {
+		next := f.play[0]
+		f.play = f.play[1:]
+		return next(spec), nil
+	}
 	res := f.results[0]
 	f.results = f.results[1:]
 	return res, nil
@@ -26,7 +38,7 @@ func (f *fakeRuns) run(_ context.Context, spec runner.Spec) (runner.Result, erro
 
 // envelope returns Claude Code's JSON envelope as stdout.
 func envelope(sessionID, result string, isError bool) runner.Result {
-	data, _ := json.Marshal(runner.ClaudeEnvelope{Type: "result", Subtype: "success", IsError: isError, SessionID: sessionID, Result: result})
+	data, _ := json.Marshal(agents.ClaudeEnvelope{Type: "result", Subtype: "success", IsError: isError, SessionID: sessionID, Result: result})
 	code := 0
 	if isError {
 		code = 1
@@ -37,6 +49,7 @@ func envelope(sessionID, result string, isError bool) runner.Result {
 func newAgent(t *testing.T, runs *fakeRuns) Agent {
 	home := t.TempDir()
 	return Agent{
+		Choice:    agents.Choice{CLI: agents.Claude()},
 		Dir:       "/repo",
 		Home:      home,
 		Milestone: "Milestone 3",
@@ -115,5 +128,54 @@ func TestAskKeepsTheSessionOnAnErrorReply(t *testing.T) {
 	}
 	if got := a.Sessions.Load().Get(session.Companion); got != "s1" {
 		t.Errorf("saved session = %q, want s1 kept", got)
+	}
+}
+
+// codexRun plays one codex exec run: the header with the session id, and
+// the final message written to the --output-last-message file.
+func codexRun(t *testing.T, sessionID, message string) func(runner.Spec) runner.Result {
+	return func(spec runner.Spec) runner.Result {
+		i := slices.Index(spec.Args, "--output-last-message")
+		if i < 0 {
+			t.Fatalf("no --output-last-message in %v", spec.Args)
+		}
+		// runner.Run would have created the log folder.
+		if err := os.MkdirAll(filepath.Dir(spec.Args[i+1]), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(spec.Args[i+1], []byte(message), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return runner.Result{Head: "OpenAI Codex v0.160.0\n--------\nsession id: " + sessionID + "\n--------"}
+	}
+}
+
+func TestAskOnCodex(t *testing.T) {
+	runs := &fakeRuns{}
+	a := newAgent(t, runs)
+	a.Home = t.TempDir() // the last-message file is written under Home
+	a.Choice = agents.Choice{CLI: agents.Codex(), Model: "gpt-6.1-sol", Effort: "low"}
+	first, second := codexRun(t, "cx-1", "PR #73 is waiting for CI."), codexRun(t, "cx-1", "Still waiting.")
+	runs.play = []func(runner.Spec) runner.Result{first, second}
+
+	reply, err := a.Ask(context.Background(), "ctx", "What is Codex doing?")
+	if err != nil || reply != "PR #73 is waiting for CI." {
+		t.Fatalf("Ask() = %q, %v", reply, err)
+	}
+	args := strings.Join(runs.specs[0].Args, " ")
+	for _, want := range []string{"exec --strict-config", `sandbox_mode="read-only"`, "-m gpt-6.1-sol", `model_reasoning_effort="low"`} {
+		if !strings.Contains(args, want) {
+			t.Errorf("Codex companion command lacks %q: %s", want, args)
+		}
+	}
+	if got := a.Sessions.Load().Get(session.Companion); got != "cx-1" {
+		t.Errorf("saved session = %q, want cx-1", got)
+	}
+
+	if reply, err := a.Ask(context.Background(), "ctx", "And now?"); err != nil || reply != "Still waiting." {
+		t.Fatalf("second Ask() = %q, %v", reply, err)
+	}
+	if args := runs.specs[1].Args; !slices.Contains(args, "resume") || args[len(args)-2] != "cx-1" {
+		t.Errorf("the second message must resume cx-1: %v", args)
 	}
 }

@@ -26,7 +26,7 @@
 │ /companion ●   open or close the companion pane (open now)                                       │
 │ /decide        draft a decision from the companion conversation                                  │
 │ /pause         let the current turn finish, start no new one                                     │
-│ ↓ 2 more                                                                                         │
+│ ↓ 3 more                                                                                         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ command › /                                                                                      │

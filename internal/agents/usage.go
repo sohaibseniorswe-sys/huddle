@@ -1,4 +1,4 @@
-package runner
+package agents
 
 import (
 	"regexp"
@@ -21,6 +21,15 @@ type UsageLimit struct {
 	// a reset time. Huddle sets state:human-required with Message as the reason.
 	Escalate bool
 	Message  string // the CLI's message line, for Hit and Escalate
+}
+
+// Usage checks a run's output for a usage limit or an account or credit
+// error, using cli's messages (CodexUsageLimit or ClaudeUsageLimit).
+func Usage(cli CLI, output string, now time.Time) UsageLimit {
+	if cli.ID == ClaudeID {
+		return ClaudeUsageLimit(output, now)
+	}
+	return CodexUsageLimit(output, now)
 }
 
 // pick chooses between the findings in one run's output: a message with a

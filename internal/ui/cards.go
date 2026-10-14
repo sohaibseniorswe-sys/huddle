@@ -55,7 +55,7 @@ func (c Card) bodyRows() int { return max(c.Height-2, 2) }
 // titleLine is the title with, on the right, how to answer the card.
 func (c Card) titleLine(inner int) string {
 	title := Fg(c.Accent).Bold(true).Render(c.Title)
-	hint := Key.Render("/decision") + Muted.Render(" to answer")
+	hint := Key.Render("tab") + Muted.Render(" or ") + Key.Render("/decision") + Muted.Render(" to answer")
 	if c.Focused {
 		title += Fg(Purple).Render("  ◆ focused")
 		hint = Muted.Render("←/→ choose · enter confirm · esc back to typing")

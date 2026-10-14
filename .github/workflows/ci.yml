@@ -1,5 +1,6 @@
 # CI runs the same checks every pull request must pass locally
-# (docs/v3/coding-guidelines.md): gofmt, go vet and go test.
+# (docs/v3/coding-guidelines.md): gofmt, go vet and go test, on Linux and
+# on macOS.
 name: CI
 
 on:
@@ -9,7 +10,14 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # macos-15-intel rather than macos-latest: in October 2026 the arm64
+        # macOS runners often could not be had at all ("not acquired by
+        # Runner of type hosted"), which cancels the job.
+        os: [ubuntu-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

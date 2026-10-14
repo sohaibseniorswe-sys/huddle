@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -220,19 +221,19 @@ func assertAllDead(t *testing.T, pidFile string) {
 	}
 }
 
+// alive reports whether process pid is running. A zombie (finished, not
+// yet reaped by its parent) counts as dead. It asks ps for the process
+// state, which works on Linux and macOS alike; macOS has no /proc.
 func alive(pid int) bool {
 	if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
 		return false
 	}
-	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
-		return false
+		return false // ps exits 1 when there is no such process
 	}
-	// Field 3, after the parenthesised command name, is the state.
-	if i := bytes.LastIndexByte(stat, ')'); i >= 0 && i+2 < len(stat) {
-		return stat[i+2] != 'Z'
-	}
-	return true
+	state := strings.TrimSpace(string(out))
+	return state != "" && !strings.HasPrefix(state, "Z")
 }
 
 func TestRunStripsAPIKeys(t *testing.T) {

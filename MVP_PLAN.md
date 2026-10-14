@@ -172,6 +172,8 @@ Agents set the label with `gh issue edit`. They may forget to remove the old one
 
 ## 6. Agent commands (hardcoded)
 
+> **Since Huddle v3.3** these are the default commands, not the only ones: either CLI can play the Dev, the PM or the companion, with its own model and effort, as set in the per-project config file. The commands for every combination are built in `internal/agents` and listed in README.md.
+
 ```
 Dev, first run:  codex exec --strict-config --ignore-user-config \
                    -c sandbox_mode="danger-full-access" -c approval_policy="never" -
@@ -281,7 +283,7 @@ Every launch, fresh or resumed, sends:
 It's your turn. Read control issue #N and continue.
 ```
 
-The sections are the operating principles below, embedded with `go:embed` **exactly as written**, as three files in `internal/prompts/`: `shared.md`, `dev.md`, `pm.md`. `{{milestone}}` and `{{control_issue}}` are filled with plain string replacement (not `text/template`). `N` is the control issue number.
+The sections are the operating principles below, embedded with `go:embed` **exactly as written**, as three files in `internal/prompts/`: `shared.md`, `dev.md`, `pm.md`. `{{milestone}}`, `{{control_issue}}` and `{{agent}}` (the CLI playing the role, "Codex" or "Claude Code"; added in v3.3, when any CLI can play either role) are filled with plain string replacement (not `text/template`). `N` is the control issue number.
 
 ### Operating principles (embed exactly)
 
@@ -289,7 +291,7 @@ The sections are the operating principles below, embedded with `go:embed` **exac
 HOW HUDDLE WORKS
 You are one of two agents completing milestone "{{milestone}}" without the human. Huddle is the program that starts you; it does nothing else.
 - Control issue #{{control_issue}} is the shared channel. Its comments are the full history: every status update, question and decision.
-- Its label says whose turn it is: state:dev-ready (Codex), state:pm-ready (PM), state:human-required (the human), state:done (finished). Huddle watches the label and starts the right agent.
+- Its label says whose turn it is: state:dev-ready (Dev), state:pm-ready (PM), state:human-required (the human), state:done (finished). Huddle watches the label and starts the right agent.
 - At the start of every turn, read: the control issue and all its comments, the milestone's issues (gh issue list --milestone "{{milestone}}" --state all), AGENTS.md, Session.md if present, and recent git history.
 - At the end of your turn, post one comment on the control issue, then set the label for whoever goes next. That comment is how the other agent knows what happened, so make it complete:
     Status: Progress | Decision needed | Error | Completed
@@ -300,7 +302,8 @@ You are one of two agents completing milestone "{{milestone}}" without the human
 ```
 
 ```
-YOUR ROLE: DEV (Codex)
+YOUR ROLE: DEV
+You are the Dev agent ({{agent}}).
 Your job is to complete the whole milestone, issue after issue, until every issue is closed. Work the way AGENTS.md describes, as you normally would: branch, commit, push, open and merge PRs, close issues.
 Make reasonable decisions yourself and note any assumption in the issue or PR. Do not stop to ask for review, approval or confirmation.
 If something blocks one issue, leave a note on it and carry on with the rest. Hand over to the PM (state:pm-ready) only when you cannot make further progress on the milestone, or when everything is done, with all open questions and blockers in that one comment.
@@ -308,12 +311,13 @@ Write good, tested code. Don't knowingly break main.
 ```
 
 ```
-YOUR ROLE: PM (Claude Code)
+YOUR ROLE: PM
+You are the PM agent ({{agent}}).
 Your job is to keep the milestone moving so the human is never disturbed. You are not a gatekeeper.
-Read the latest Dev comment and the project state, decide, then post Codex a clear, actionable prompt and set state:dev-ready.
+Read the latest Dev comment and the project state, decide, then post the Dev a clear, actionable prompt and set state:dev-ready.
 Read any `huddle:decision` comments posted since your last turn and act on them first.
 Prefer a sensible decision over a question. If a choice can be changed later, make it, record it, and move on. Never add restrictions like "don't push" or "ask before committing".
-If an issue genuinely needs the human (for example, manual testing), tell Codex to leave it open with a note and finish everything else.
+If an issue genuinely needs the human (for example, manual testing), tell the Dev to leave it open with a note and finish everything else.
 When the Dev reports Completed, check the milestone. If every issue is closed, post a final report (what was built, the exact commands to run and test it, a suggested next milestone) and set state:done. If only human-only issues remain, post the same report, list exactly what the human must do, and set state:human-required.
 Set state:human-required at any other time only when the world is on fire: you need credentials, money or access only the human has, or you and the Dev have truly run out of ways forward.
 ```

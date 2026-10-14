@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/sohaibseniorswe-sys/huddle/internal/agents"
 	"github.com/sohaibseniorswe-sys/huddle/internal/companion"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
@@ -293,6 +294,8 @@ func (m Model) describeScreen() string {
 		s = fmt.Sprintf("Activity list, line selected: %s %s %q", e.Time.Format(eventTimeLayout), e.Actor, e.Text)
 	case viewStatus:
 		s = "Status view (/status)"
+	case viewSettings:
+		s = "Settings view (/settings, read-only)"
 	case viewLog:
 		s = m.log.describe()
 	default:
@@ -316,11 +319,11 @@ func (m Model) stateLine() string {
 		if s.Role == session.PM {
 			label = gh.StatePMWorking
 		}
-		line = fmt.Sprintf("%s, %s running for %s, %s", label, roleTitle(s.Role), elapsed(m.now.Sub(s.Since)), turn)
+		line = fmt.Sprintf("%s, %s running for %s, %s", label, m.roleTitle(s.Role), elapsed(m.now.Sub(s.Since)), turn)
 	case loop.PhaseUsageWait:
-		line = fmt.Sprintf("%s waiting for its usage limit until %s, %s", roleTitle(s.Role), s.Until.Format("15:04"), turn)
+		line = fmt.Sprintf("%s waiting for its usage limit until %s, %s", m.roleTitle(s.Role), s.Until.Format("15:04"), turn)
 	case loop.PhasePaused:
-		line = fmt.Sprintf("paused by the human, %s next, %s", roleTitle(s.Role), turn)
+		line = fmt.Sprintf("paused by the human, %s next, %s", m.roleTitle(s.Role), turn)
 	case loop.PhaseHuman:
 		line = fmt.Sprintf("%s, waiting for the human since %s, %s", gh.StateHumanRequired, s.Since.Format("15:04"), turn)
 	case loop.PhaseNoLabel:
@@ -388,19 +391,24 @@ func pmQuestionMessage(comments []gh.Comment, control int) string {
 }
 
 // lastPMOutput returns the PM's final message from its newest run in runs
-// (oldest first), or "" if there is none. The PM's stdout is Claude Code's
-// JSON envelope, which is the last output line of its log.
+// (oldest first), or "" if there is none. A Codex PM wrote it to the
+// .last file next to its log; a Claude Code PM's is in its JSON envelope,
+// the last output line of its log.
 func lastPMOutput(runs []logRun) string {
 	for i := len(runs) - 1; i >= 0; i-- {
 		if !strings.HasSuffix(runs[i].path, "-pm.log") {
 			continue
+		}
+		last := strings.TrimSuffix(runs[i].path, ".log") + ".last"
+		if data, err := os.ReadFile(last); err == nil && strings.TrimSpace(string(data)) != "" {
+			return strings.TrimSpace(string(data))
 		}
 		lines := strings.Split(runner.StripStamps(readTail(runs[i].path, maxPMLogTail)), "\n")
 		for j := len(lines) - 1; j >= 0; j-- {
 			if !strings.HasPrefix(lines[j], "{") {
 				continue
 			}
-			if env, err := runner.ParseClaude(lines[j]); err == nil && env.Result != "" {
+			if env, err := agents.ParseClaude(lines[j]); err == nil && env.Result != "" {
 				return env.Result
 			}
 		}

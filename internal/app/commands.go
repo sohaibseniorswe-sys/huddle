@@ -57,6 +57,8 @@ func (m Model) runCommand(name, args string) (Model, tea.Cmd) {
 		return m.runResume(), nil
 	case commands.Log:
 		m = m.openLatestLog()
+	case commands.Settings:
+		m = m.openSettings()
 	case commands.Quit:
 		return m.runQuit()
 	}
@@ -74,7 +76,7 @@ func (m Model) runPause() Model {
 	m = m.addEvent(m.youEvent(commands.Pause))
 	text := "Pausing: no new turn starts until /resume"
 	if m.status.Phase == loop.PhaseWorking || m.status.Phase == loop.PhaseUsageWait {
-		text = fmt.Sprintf("Pausing: the %s's current turn will finish, then nothing new starts", roleTitle(m.status.Role))
+		text = fmt.Sprintf("Pausing: the %s's current turn will finish, then nothing new starts", m.roleTitle(m.status.Role))
 	}
 	return m.addEvent(m.huddleEvent(text))
 }

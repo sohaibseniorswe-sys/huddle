@@ -89,6 +89,9 @@ func TestAgentCLIsCheck(t *testing.T) {
 	allFound := func(string) (string, error) { return "/usr/bin/x", nil }
 	runWith := func(codexErr string, claudeOut string) RunFunc {
 		return func(_ context.Context, name string, args ...string) (string, string, error) {
+			if len(args) == 1 && args[0] == "--version" {
+				return map[string]string{"codex": "codex-cli 0.160.0\n", "claude": "2.1.299 (Claude Code)\n"}[name], "", nil
+			}
 			switch name {
 			case "codex":
 				if codexErr != "" {
@@ -102,10 +105,16 @@ func TestAgentCLIsCheck(t *testing.T) {
 		}
 	}
 
+	both := []string{"codex", "claude"}
+
 	t.Run("all good", func(t *testing.T) {
 		a := AgentCLIs{LookPath: allFound, Run: runWith("", claudeSubscription)}
-		if err := a.Check(ctx); err != nil {
+		versions, err := a.Check(ctx, both)
+		if err != nil {
 			t.Errorf("Check() = %v", err)
+		}
+		if versions["codex"] != "0.160.0" || versions["claude"] != "2.1.299" {
+			t.Errorf("versions = %v", versions)
 		}
 	})
 	t.Run("claude missing", func(t *testing.T) {
@@ -116,20 +125,36 @@ func TestAgentCLIsCheck(t *testing.T) {
 			return "/usr/bin/" + b, nil
 		}
 		a := AgentCLIs{LookPath: lp, Run: runWith("", claudeSubscription)}
-		if err := a.Check(ctx); err == nil || !strings.Contains(err.Error(), "claude not found") {
+		if _, err := a.Check(ctx, both); err == nil || !strings.Contains(err.Error(), "claude not found") {
 			t.Errorf("Check() = %v, want claude not found", err)
 		}
 	})
 	t.Run("codex not logged in", func(t *testing.T) {
 		a := AgentCLIs{LookPath: allFound, Run: runWith("Not logged in", claudeSubscription)}
-		if err := a.Check(ctx); err == nil || !strings.Contains(err.Error(), "codex") {
+		if _, err := a.Check(ctx, both); err == nil || !strings.Contains(err.Error(), "codex") {
 			t.Errorf("Check() = %v, want codex error", err)
 		}
 	})
 	t.Run("claude using api key", func(t *testing.T) {
 		a := AgentCLIs{LookPath: allFound, Run: runWith("", `{"loggedIn":true,"authMethod":"api_key","apiProvider":"firstParty"}`)}
-		if err := a.Check(ctx); err == nil || !strings.Contains(err.Error(), "api_key") {
+		if _, err := a.Check(ctx, both); err == nil || !strings.Contains(err.Error(), "api_key") {
 			t.Errorf("Check() = %v, want api_key error", err)
+		}
+	})
+	t.Run("only the CLIs in use are checked", func(t *testing.T) {
+		lp := func(b string) (string, error) {
+			if b == "codex" {
+				return "", errors.New("not found")
+			}
+			return "/usr/bin/" + b, nil
+		}
+		a := AgentCLIs{LookPath: lp, Run: runWith("Not logged in", claudeSubscription)}
+		versions, err := a.Check(ctx, []string{"claude"})
+		if err != nil {
+			t.Errorf("Check(claude only) = %v; codex is not used, so it must not be checked", err)
+		}
+		if _, ok := versions["codex"]; ok {
+			t.Errorf("versions = %v, want claude only", versions)
 		}
 	})
 }

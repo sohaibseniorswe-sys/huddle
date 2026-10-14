@@ -26,7 +26,7 @@
 │ /companion     open or close the companion pane                                                  │
 │ /resume        start the next turn now                                                           │
 │ /log           raw output of every agent run, scrollable                                         │
-│ /quit          stop the running agent now; it resumes on next start                              │
+│ ↓ 2 more                                                                                         │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ command › /                                                                                      │

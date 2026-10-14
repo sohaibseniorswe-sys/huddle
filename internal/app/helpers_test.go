@@ -11,9 +11,11 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
 	"github.com/sohaibseniorswe-sys/huddle/internal/activity"
+	"github.com/sohaibseniorswe-sys/huddle/internal/agents"
 	"github.com/sohaibseniorswe-sys/huddle/internal/companion"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
@@ -199,6 +201,11 @@ func (f *fixture) config(logDir string) Config {
 		Control:   gh.Control{Client: f.gh, Repo: testRepo, Number: 58},
 		Controls:  &loop.Controls{},
 		Stop:      func() { f.stopped = true },
+		Team: agents.Team{
+			Dev:       agents.Choice{CLI: agents.Codex()},
+			PM:        agents.Choice{CLI: agents.Claude()},
+			Companion: agents.Choice{CLI: agents.Claude()},
+		},
 		LogDir:    logDir,
 		RepoDir:   testRepoDir,
 		Now:       func() time.Time { return f.now },
@@ -313,5 +320,57 @@ func newDecisionFixture(t *testing.T) *fixture {
 	f.run(f.send(StatusMsg{Phase: loop.PhaseHuman, Turn: 6, Since: f.now}))
 	f.keys("Use OpenStreetMap for now. I'll get a Mapbox token next week.", "enter")
 	f.keys("Is MapLibre as fast as Mapbox on mobile?")
+	return f
+}
+
+// helpText is the help line as plain text.
+func (f *fixture) helpText() string {
+	return ansi.Strip(f.m.helpLine())
+}
+
+// newSettingsFixture returns the run screen of newFixture with a home
+// folder holding the project's settings, logs and sessions, as /settings
+// reads them: Codex as the Dev with the CLI's default model, Claude Code as
+// the PM with opus at high effort, the companion following the PM.
+func newSettingsFixture(t *testing.T) *fixture {
+	t.Helper()
+	f := newFixture(t)
+	home := t.TempDir()
+	logDir := filepath.Join(home, ".huddle", "logs")
+	logs := map[string]string{
+		"20261013-204000-turn5-dev.log": "20:40:00  # huddle: codex exec --strict-config - in " + testRepoDir + " at 2026-10-13T20:40:00Z\n" +
+			"20:40:01  OpenAI Codex v0.160.0\n20:40:01  model: gpt-6.1-sol\n20:40:01  session id: 01a13bd6-ec1a-7580-8fef-eaf9c06ef981\n",
+		"20261013-223000-turn4-pm.log": "22:30:00  # huddle: claude -p --output-format json --model opus --effort high in " + testRepoDir + " at 2026-10-13T22:30:00Z\n" +
+			`22:39:00  {"type":"result","is_error":false,"session_id":"717c4e2a-0000-4000-8000-0000000002f5","result":"Over to Codex.","modelUsage":{"claude-opus-5-5":{"outputTokens":800}}}` + "\n",
+	}
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, text := range logs {
+		if err := os.WriteFile(filepath.Join(logDir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sessions := session.New(home, testRepo, 58)
+	if err := sessions.Save(session.Dev, "01a13bd6-ec1a-7580-8fef-eaf9c06ef981"); err != nil {
+		t.Fatal(err)
+	}
+	if err := sessions.Save(session.PM, "717c4e2a-0000-4000-8000-0000000002f5"); err != nil {
+		t.Fatal(err)
+	}
+
+	f.m.cfg.LogDir = logDir
+	f.m.cfg.Team.PM = agents.Choice{CLI: agents.Claude(), Model: "opus", Effort: "high"}
+	f.m.cfg.Team.Companion = f.m.cfg.Team.PM
+	f.m.cfg.Settings = Settings{
+		Home:               home,
+		Path:               filepath.Join(home, ".huddle", "projects", "sohaibseniorswe-sys_palantir.yaml"),
+		Exists:             true,
+		Autonomy:           8,
+		CompanionFollowsPM: true,
+		Versions:           map[string]string{agents.CodexID: "0.160.0", agents.ClaudeID: "2.1.299"},
+		Sessions:           sessions,
+		CompanionSessions:  session.NewCompanion(home, testRepo, 58),
+	}
 	return f
 }
