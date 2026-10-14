@@ -51,7 +51,7 @@ One entry per issue: when it was built, what was built, where it differs from th
 ## v3.3 Agent choice and config
 
 - **Started:** 2026-10-14 01:57 EDT, in a session that ended about two minutes in, after reading the code and creating the branch (nothing written). Restarted 15:12 EDT; the work below was done from then on.
-- **Finished:** FINISH_TIME
+- **Finished:** 2026-10-14 16:03 EDT (PR #9 merged into `v3`)
 - **Branch / PR:** `v3.3-agent-config` → `v3`, https://github.com/sohaibseniorswe-sys/huddle/pull/9
 
 ### What was built
@@ -76,7 +76,7 @@ One entry per issue: when it was built, what was built, where it differs from th
 - **Roles swapped, sandbox milestone "Sandbox M4"** (#22 Truncate, #23 IsBlank, control #24), settings `dev: claude`, `pm: codex`, `huddle --plain`: Claude Code as the Dev merged PRs #25 and #27 and set `state:pm-ready`; Codex as the PM checked the milestone, ran the tests and set `state:done`. About 5 minutes (15:31–15:36). Also covered by `TestSwappedRoles` (loop), `TestCLIAgentsSwappedRoles` and `TestSettingsFileChoosesTheAgents` (main).
 - **Non-default model and effort for each role, "Sandbox M5"** (#26 SnakeCase, control #28), on the run screen in tmux: Dev `codex -m gpt-6.1-sol -c model_reasoning_effort="medium"` (the header confirms `reasoning effort: medium`), PM `claude --model sonnet --effort low`, companion (its own) `claude ... --setting-sources user --model haiku --effort low`. The logs' first lines show the flags. I asked the companion what the Dev was doing while Codex worked; it answered. `state:done` after about 4 minutes. `/settings` then showed each role's model and effort and `claude-sonnet-5-5` / `claude-haiku-5-5` as the models the last runs used.
 - **/settings golden** (`09-settings`) matches screen 09, with a model and effort line under each agent. `TestViewSwappedRoles` checks the badge and usage with the roles swapped.
-- **CI on Linux and macOS:** see the PR.
+- **CI on Linux and macOS:** gofmt, go vet and go test passed on `ubuntu-latest` and `macos-15-intel` (run 38627939008). Nothing in Huddle's own code needed changing for macOS.
 - **Companion cannot be given write access by the repo:** with a `.claude/settings.local.json` allowing `Bash(touch:*)` in the sandbox, the companion command without `--setting-sources user` created the file; with it, the call was denied. `TestSmokeCompanionIsReadOnly` (both CLIs, with allow rules for writing and committing planted in the clone) passed: HEAD, `git status` and the files were unchanged.
 - **Tab cycle:** `TestTabReachesTheCardFirst`, `TestDecisionCommandWithAnEmptyTextField`, and the existing card tests (which press Tab, then type `/decision`).
 
@@ -88,6 +88,7 @@ One entry per issue: when it was built, what was built, where it differs from th
 - **`DefaultEffort`** is the effort the wizard suggests (`medium` for both); an empty effort in the file still means the CLI's own default.
 - **Validate's test run** gets no tools (Claude Code `--tools ""`, Codex read-only with `--skip-git-repo-check`) in an empty temp folder. It also reports a usage limit and a wrong answer. Because Claude Code ignores an unknown `--effort` with only a warning, Validate treats that warning as an error.
 - **`/settings` shows "Level 8 · Autonomous (used from v3.5)"**, a model/effort line under each agent, all three session ids, and "N runs of this repo" (the logs do not record the milestone, as screen 09's "this milestone" would need).
+- **macOS runs on `macos-15-intel`, not `macos-latest`.** Twice the `macos-latest` (arm64) job was never given a runner and was cancelled after 15 minutes ("The job was not acquired by Runner of type hosted even after multiple attempts", "Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times"). The Intel image ran at once. Switch back when arm64 capacity returns.
 - **Help line while a card waits** is now "enter send · tab answer the decision · / commands · ctrl+c quit" (screen 10 showed `/decision` and `tab switch pane`).
 
 ### Needs you

@@ -347,4 +347,4 @@ For example `You've hit your weekly limit · resets Oct 15, 10am (Europe/London)
 
 ## macOS
 
-CI runs `gofmt`, `go vet` and `go test` on `ubuntu-latest` and `macos-latest`. Huddle's Unix-specific code (a process group per agent with `Setpgid`, killed with `kill(-pid, SIGKILL)`; SIGTERM handling) is the same on macOS. The one Linux-only piece was in a test: the runner tests read `/proc/<pid>/stat` to see whether a process was still alive, which on macOS made the check always pass. They now ask `ps -o stat=`, which works on both.
+CI runs `gofmt`, `go vet` and `go test` on `ubuntu-latest` and `macos-15-intel` (the arm64 `macos-latest` runners could not be had in October 2026; their jobs were cancelled unstarted). Huddle's Unix-specific code (a process group per agent with `Setpgid`, killed with `kill(-pid, SIGKILL)`; SIGTERM handling) is the same on macOS. The one Linux-only piece was in a test: the runner tests read `/proc/<pid>/stat` to see whether a process was still alive, which on macOS made the check always pass. They now ask `ps -o stat=`, which works on both.
