@@ -16,7 +16,7 @@ import (
 // step list, a blank row, then the card, indented; the help line is the
 // last row.
 const (
-	cardWidth   = 70 // the card's width inside its border
+	cardWidth   = 74 // the card's width inside its border: room for five model chips
 	cardMargin  = 2  // columns left of the card
 	cardPadX    = 2  // the card's padding left and right
 	cardPadY    = 1  // the card's padding above and below

@@ -10,22 +10,22 @@
     8  Repo preparation                                                                             
     9  Save                                                                                         
                                                                                                     
-  ╭──────────────────────────────────────────────────────────────────────╮                          
-  │                                                                      │                          
-  │  How independently should the agents work?                           │                          
-  │                                                                      │                          
-  │  0 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━●━━━━━━━━━━━ 10                   │                          
-  │                                                                      │                          
-  │  8 · Autonomous                                                      │                          
-  │                                                                      │                          
-  │  Dev goes to the PM   only for conflicts between issues,             │                          
-  │                       requirement changes or real blockers           │                          
-  │                                                                      │                          
-  │  PM comes to you      only when the world is on fire:                │                          
-  │                       credentials, money, access, or no way          │                          
-  │                       forward                                        │                          
-  │                                                                      │                          
-  ╰──────────────────────────────────────────────────────────────────────╯                          
+  ╭──────────────────────────────────────────────────────────────────────────╮                      
+  │                                                                          │                      
+  │  How independently should the agents work?                               │                      
+  │                                                                          │                      
+  │  0 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━●━━━━━━━━━━━ 10                       │                      
+  │                                                                          │                      
+  │  8 · Autonomous                                                          │                      
+  │                                                                          │                      
+  │  Dev goes to the PM   only for conflicts between issues,                 │                      
+  │                       requirement changes or real blockers               │                      
+  │                                                                          │                      
+  │  PM comes to you      only when the world is on fire:                    │                      
+  │                       credentials, money, access, or no way              │                      
+  │                       forward                                            │                      
+  │                                                                          │                      
+  ╰──────────────────────────────────────────────────────────────────────────╯                      
                                                                                                     
                                                                                                     
                                                                                                     

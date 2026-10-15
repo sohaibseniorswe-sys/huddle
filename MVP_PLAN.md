@@ -166,7 +166,7 @@ Huddle creates these on the target repo if missing (idempotent):
 | `state:pm-ready` | agents (or human) | PM's turn |
 | `state:pm-working` | Huddle | PM is running (visibility only) |
 | `state:human-required` | PM, or Huddle for account and credit errors (8.6) | Waiting for the human |
-| `state:done` | PM | Milestone finished (the PM then closes the control issue; a closed control issue also means finished) |
+| `state:done` | PM | Milestone finished (the PM then closes the control issue) |
 
 Agents set the label with `gh issue edit`. They may forget to remove the old one, so Huddle normalises: after each run it removes its own `*-working` label, and whenever it sets a label it removes all other `state:*` labels. If several non-working `state:*` labels are present when Huddle reads the issue, it takes the first in this order and removes the rest: `human-required`, `done`, `pm-ready`, `dev-ready`.
 
@@ -224,7 +224,8 @@ Huddle reads the control issue's `state:*` label (normalised, section 5) every 3
 | `state:dev-ready` | Run a Dev turn (8.2) |
 | `state:pm-ready` | Run a PM turn (8.2) |
 | `state:human-required` | Print the latest comment on the control issue (once per change), then keep polling until a ready label is set |
-| `state:done`, or the control issue is closed (whatever its label; since v3.4) | Print the PM's final report (the latest comment on the control issue) and exit 0. Nothing else is checked: not the milestone's other issues, not whether the GitHub milestone is closed |
+| `state:done` | Print the PM's final report (the latest comment on the control issue) and exit 0 |
+| control issue closed without `state:done` (since v3.4) | If every other issue of the milestone is closed: as `state:done`. Otherwise reopen it, comment that Huddle reopened it because issues #x, #y are still open, and continue with its label. At startup, ask instead: reopen and continue, or leave it and exit. Whether the GitHub milestone is closed never matters; the control issue never counts as a milestone issue |
 | `state:dev-working` / `state:pm-working` | A previous Huddle run was interrupted. Treat it as `dev-ready` / `pm-ready` and start that agent again (resuming its session) |
 | no `state:*` label | Print "add state:dev-ready to start" once, then keep polling |
 

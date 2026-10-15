@@ -62,9 +62,25 @@ The human never talks to the Dev or the PM. You talk to the **companion**, a thi
 - **Actions.** The companion may propose a Huddle action (`pause`, `resume`, `status`, `log HH:MM`) as an **action card** with `Agree` and `Not now`; it runs only if you agree.
 - **Files.** The conversation is saved to `~/.huddle/companion/<owner>_<repo>_<control-issue>.jsonl` and comes back when Huddle restarts. The companion's session id is in `~/.huddle/sessions/<owner>_<repo>_<control-issue>_companion.json`, next to the Dev and PM file (a file of its own, because the companion saves while the loop may be saving). Its raw output goes to `~/.huddle/logs/companion/`, apart from the runs `/log` shows.
 
+## Setup wizard
+
+The first time Huddle runs for a repo (no settings file yet), it opens the setup wizard (`internal/wizard`) before anything else. `huddle setup` (or `huddle --repo owner/name setup`) opens it again with the current settings pre-selected, and exits once they are saved. `huddle --plain` without a settings file prints `Run huddle setup first` and exits with status 2: the wizard needs a terminal.
+
+| # | Step | What it does |
+| --- | --- | --- |
+| 1 | Project folder | Finds the git repo around the current folder; otherwise type the folder (`~` works). |
+| 2 | GitHub repo | Reads `origin`, checks it is the target repo, that `gh` is signed in, and that the account has write access. |
+| 3–5 | Dev, PM, companion | CLI, model (known models or **Custom…** to type any name) and effort chips. Changing a CLI resets its model and effort to that CLI's first model and suggested effort. The companion can use the PM's settings. |
+| 6 | Logins and test runs | Each CLI in use: installed, version, subscription login; no API keys; then one short test run (`agents.Validate`) per role, one at a time. On a failed test run, Enter goes back to that role's step. |
+| 7 | Autonomy level | The dial, 0–10, with what the chosen level means for the Dev and the PM. |
+| 8 | Repo preparation | Creates missing labels. Offers starter `AGENTS.md` and `CLAUDE.md` when missing (shown before anything is written). At autonomy 6 or more, warns (without blocking) about rules in them that make the agents stop and wait, with line numbers. |
+| 9 | Save | Shows a summary, writes the settings file and the chosen starter files, and offers to commit those files (not pushed). |
+
+Keys: ↑/↓ field, ←/→ choose, Enter confirm, Esc back one step (choices are kept), Ctrl+C quit without saving. Clicking a chip selects it. Nothing is written before step 9, except labels step 8 creates on GitHub.
+
 ## Project settings
 
-Each target repo has a settings file, `~/.huddle/projects/<owner>_<repo>.yaml` (`internal/config`). The setup wizard (v3.4) will write it; until then, edit it by hand. Without a file, Huddle uses the defaults, which are what v1 and v2 always ran.
+Each target repo has a settings file, `~/.huddle/projects/<owner>_<repo>.yaml` (`internal/config`). The setup wizard writes it; it is safe to edit by hand. If it has no `dir`, or Huddle is started outside a git repo, the folder in `dir` is used.
 
 ```yaml
 repo: sohaibseniorswe-sys/palantir
@@ -101,16 +117,16 @@ Huddle runs these checks in order and stops at the first failure, printing the r
 3. `AGENTS.md` and `CLAUDE.md` exist. `Session.md` is created empty if it is missing.
 4. `gh` is logged in and can see the target repo.
 5. All Huddle labels exist on the target repo (missing ones are created; existing ones are left alone).
-6. The project's settings file is valid (or missing: the defaults are used). Huddle prints which CLI, model and effort plays each role.
+6. The project's settings file is valid (without one, the setup wizard runs first). Huddle prints which CLI, model and effort plays each role.
 7. The CLIs that play a role (only those) are on `PATH` and logged in with a subscription. Their versions are recorded for `/settings`.
-8. Exactly one open issue is labelled `control`, and it has a milestone.
+8. Exactly one open issue is a control issue (labelled `control`, or with `<!-- huddle:control -->` in its body), and it has a milestone. If there is none but a control issue was closed while its milestone still has open issues, Huddle prints `Control issue #N is closed but K issues are still open` and asks: 1) Reopen and continue, or 2) Leave it and exit (`--yes` reopens).
 9. Huddle prints the summary and asks `Continue? [Y/n]` (skipped with `--yes`).
 
 There is no clean-tree check: after an interrupted run the tree is normally dirty, and Huddle must be able to resume the agent.
 
 ## The watch loop
 
-Once the checks pass, Huddle watches the control issue (`internal/loop`). It reads the issue's `state:*` label every 30 seconds while no agent is running (at once after `/resume` or an agreed decision), and straight after each agent exits. Only one Dev or PM agent runs at a time; the companion may run beside it. Huddle never stops on its own: the loop ends when the milestone is done: the control issue has `state:done` or is closed (status 0), on Ctrl+C or `/quit` (status 130), or after one turn with `--once`. On the run screen, Huddle then stays open until you quit; with `--plain` it exits.
+Once the checks pass, Huddle watches the control issue (`internal/loop`). It reads the issue's `state:*` label every 30 seconds while no agent is running (at once after `/resume` or an agreed decision), and straight after each agent exits. Only one Dev or PM agent runs at a time; the companion may run beside it. Huddle never stops on its own: the loop ends when the milestone is done (status 0; see below), on Ctrl+C or `/quit` (status 130), or after one turn with `--once`. On the run screen, Huddle then stays open until you quit; with `--plain` it exits.
 
 To start a run, add `state:dev-ready` to the control issue (or `state:pm-ready` to have the PM write the first Dev prompt).
 
@@ -124,8 +140,10 @@ To start a run, add `state:dev-ready` to the control issue (or `state:pm-ready` 
 | `state:pm-ready` | agents, or the human | Runs a PM turn. |
 | `state:pm-working` | Huddle, while the PM runs | As `dev-working`, for the PM. |
 | `state:human-required` | PM, or Huddle for account and credit errors | Prints the latest control-issue comment (once per new comment) and keeps polling until someone sets a ready label. |
-| `state:done` | PM | Prints the PM's final report (the latest comment) and exits 0. The PM then closes the control issue. |
-| control issue closed | PM (or you) | The same as `state:done`, whatever the label says. Nothing else counts: open work issues or an open GitHub milestone do not matter. |
+| `state:done` | PM | The milestone is done: prints the PM's final report (the latest comment) and exits 0. The PM then closes the control issue. |
+| control issue closed without `state:done` | PM (or you) | If every other issue of the milestone is closed: done, as for `state:done`. If some are still open: Huddle reopens it, comments that it did so because issues #x, #y are still open, and carries on with the label it has. |
+
+Whether the GitHub milestone itself is open or closed never matters, and the control issue never counts as one of the milestone's issues.
 | none | | Prints "add state:dev-ready to start" once and keeps polling. |
 
 Agents set labels with `gh issue edit --add-label` and may leave the old one in place, so Huddle normalises: if several state labels are present, the first of `human-required`, `done`, `pm-ready`, `dev-ready`, `pm-working`, `dev-working` wins and the others are removed. Whenever Huddle sets a label it removes every other `state:*` label.
