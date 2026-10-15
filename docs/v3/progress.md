@@ -101,8 +101,8 @@ One entry per issue: when it was built, what was built, where it differs from th
 ## v3.4 Setup wizard
 
 - **Started:** 2026-10-14 16:20 EDT. A usage limit stopped the session at about 16:55; work resumed at 20:01.
-- **Finished:** FINISH_TIME
-- **Branch / PR:** `v3.4-setup-wizard` → `v3`, PR_LINK
+- **Finished:** 2026-10-14 20:08 EDT (PR #10 merged into `v3`)
+- **Branch / PR:** `v3.4-setup-wizard` → `v3`, https://github.com/sohaibseniorswe-sys/huddle/pull/10
 
 ### What was built
 
@@ -140,7 +140,7 @@ One entry per issue: when it was built, what was built, where it differs from th
 - **AGENTS.md conflicts at 8, not 3.** `TestConflicts` and `TestPrepareWarnsAboutConflictingRules` (sample files, warnings with line numbers on screen at 8, none at 3; never blocks).
 - **Esc at every step.** `TestEscGoesBackOneStepKeepingChoices` walks from step 9 back to step 1 and compares the whole configuration after each Esc.
 - Also: `TestFolderStep`, `TestRepoStepErrors`, `TestSaveWritesSettingsAndStarterFiles` (nothing written before step 9; starter written; skipped file not written; commit of exactly the new file), `TestCtrlCQuitsWithoutSaving`, `TestClickAChip`, `TestLongFolderFits`, `TestPlainWithoutSettings`, `TestWizardCanceled`.
-- **Manual sandbox check:** SANDBOX_RESULT
+- **Manual sandbox check, "Sandbox M6"** (#30 Reverse, control #31, created with the `<!-- huddle:control -->` marker as well as the label). I made a fresh clone with no settings file for the sandbox and ran `bin/huddle-v3 --repo sohaibseniorswe-sys/huddle-sandbox` in tmux at 100 × 34. The wizard opened. In it I chose Dev Codex · GPT-6.1 Sol · medium, PM Claude Code · Sonnet 5.5 · low, the companion "Same as PM", and autonomy 8. Step 6 checked both logins and ran a real test of each choice. Step 8 found the labels and both agent files present. Step 9 wrote `~/.huddle/projects/sohaibseniorswe-sys_huddle-sandbox.yaml`. The startup checks then used it, and the run screen started at 20:04. Codex merged PR #32 and closed #30 (`Reverse` was already in `strutil.go` from an earlier run, so it added the Unicode tests the issue asks for). The PM posted the final report, set `state:done` and closed the control issue (the new principle). At 20:06 Huddle showed "state:done: the milestone is finished" with the report. Running `huddle` again in that clone skipped the wizard, printed the settings line, and stopped at the control-issue check, as expected with no open control issue. The wizard's settings file for the sandbox is kept.
 
 ### Deviations from the spec
 
