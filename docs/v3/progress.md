@@ -164,7 +164,7 @@ One entry per issue: when it was built, what was built, where it differs from th
 
 - **Started:** 2026-10-14 20:55 EDT
 - **Finished:** 2026-10-14 20:59 EDT (PR opened, CI started)
-- **Branch / PR:** `v3.5-autonomy-level` → `v3`, PR_URL
+- **Branch / PR:** `v3.5-autonomy-level` → `v3`, https://github.com/sohaibseniorswe-sys/huddle/pull/11
 
 ### What was built
 
