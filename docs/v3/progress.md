@@ -239,3 +239,18 @@ One entry per issue: when it was built, what was built, where it differs from th
 - **Merge order:** #11 (v3.5) first, then this PR.
 - **Finished milestones stay open on GitHub.** Neither Huddle nor the PM closes them, so the picker lists M7 and M8 (and older sandbox milestones) as open. Decide whether Huddle should close a milestone when its control issue reaches `state:done`, or the picker should hide milestones with a `state:done` control issue.
 - The sandbox now has milestones M7/M8, issues #33–#36 (all closed) and Greet/Farewell on `main`.
+
+## Follow-up: control-issue done rules (checked 2026-10-14 after merging #11 and #12)
+
+The rules were built in v3.4 (commit `acd6e16`, PR #10), not v3.5, and are all on `v3`:
+
+- Done = control issue has `state:done` (open or closed), or it is closed and every other issue of its milestone is closed: `loop.Run`, cases `gh.StateDone` and `gh.StateClosed` (`TestDoneByLabel`, `TestDoneByClosingWithNothingOpen`, `TestOnlyTheControlIssueOpenIsNotDone`).
+- Closed with work still open during a run → reopened with a comment, and the run continues: `loop.reopenIfWorkOpen` (`TestClosedDuringARunWithWorkOpenIsReopened`, `TestClosedAtFirstReadWithWorkOpen`).
+- Closed with work open at startup → Huddle asks 1) reopen and continue / 2) leave it (`--yes` reopens): `checks.FindUnfinishedControl`, `checks.ChooseReopen`, `reopenUnfinished` in main (`TestStartupClosedControlIssueWithWorkOpen`).
+- Control issues found by the `control` label or the `<!-- huddle:control -->` marker: `gh.IsControl`, used by `FindControlIssue`, `FindUnfinishedControl`, `OpenWork`, `start.Load`. Control issues Huddle creates carry both.
+
+What is missing (for a follow-up; not implemented):
+
+1. **The startup question is skipped when any other control issue is open.** `reopenUnfinished` (cmd/huddle/main.go) asks only when `FindControlIssue` returns `ErrNoControlIssue`. Since v3.6, several control issues can be open at once (a queued plan), so a control issue closed too early is never offered while another one is open, and the start menu does not list it either.
+2. **A queued control issue closed with work still open is dropped, not reopened.** `start.Queue.Next` removes any queued control issue that is no longer open ("closed by hand, or deleted: skip it") and moves on, without checking its milestone's open issues or asking.
+3. **The startup check looks only at the 5 most recently closed control issues** (`closedControlLookback = 5` in internal/checks/github.go). An older one closed too early is not found.
