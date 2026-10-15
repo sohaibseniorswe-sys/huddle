@@ -15,15 +15,15 @@ const (
 	cardButtonGap = 2
 )
 
-// Card is a decision or action card: a question the human answers with
-// one of two buttons. It is drawn in the slot above the text field.
+// Card is a decision, action or plan card: a question the human answers
+// with one of its buttons. It is drawn in the slot above the text field.
 type Card struct {
-	Title    string         // "DECISION" or "ACTION"
+	Title    string         // "DECISION", "ACTION" or "PLAN"
 	Accent   lipgloss.Color // the border and title colour
 	Text     string         // the statement, wrapped to the card's width
 	Note     string         // a dim line below the text, such as the reason; shown only if there is room
-	Buttons  [2]string      // "Agree" and "Keep talking" or "Not now"
-	Selected int            // the button ←/→ has chosen, 0 or 1
+	Buttons  []string       // "Agree" first, then "Keep talking", "Not now" or "Show all", "Keep talking"
+	Selected int            // the index of the button ←/→ has chosen
 	// Focused is true when the card has the keyboard. Unfocused, its
 	// buttons are greyed out and it says how to focus it.
 	Focused bool
@@ -89,7 +89,7 @@ func truncate(s string, w int) string {
 	return lipgloss.NewStyle().MaxWidth(max(w, 0)).Render(s)
 }
 
-// buttonsLine draws the two buttons.
+// buttonsLine draws the buttons.
 func (c Card) buttonsLine() string {
 	var out []string
 	for i, label := range c.Buttons {

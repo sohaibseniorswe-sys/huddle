@@ -61,6 +61,7 @@ func (m Model) sync() Model {
 	m.statusVP.Width, m.statusVP.Height = width, rows
 	m.settingsVP.Width, m.settingsVP.Height = width, rows
 	m.log.vp.Width, m.log.vp.Height = width, rows
+	m.planVP.Width, m.planVP.Height = width, rows
 	m.chatVP.Width, m.chatVP.Height = width, max(l.companionRows-ui.PaneChromeRows, 1)
 	// The text field scrolls sideways once the text is wider than this.
 	m.input.Width = width - lipgloss.Width("companion › ") - 1
@@ -71,6 +72,7 @@ func (m Model) sync() Model {
 	m.list.SetContent(list)
 	m.statusVP.SetContent(m.statusContent())
 	m.settingsVP.SetContent(m.settings)
+	m.planVP.SetContent(ui.Plain.Width(width).Render(m.planText))
 	m.log.vp.SetContent(m.log.content(width))
 	m.chatVP.SetContent(m.chatContent(width))
 	if followList {
@@ -87,6 +89,9 @@ func (m Model) projectPane() string {
 	badge, colour := m.badge()
 	name := m.cfg.Repo[strings.LastIndex(m.cfg.Repo, "/")+1:]
 	info := fmt.Sprintf("%s · %s · control #%d · autonomy %d", name, m.cfg.Milestone, m.cfg.Control.Number, m.cfg.Settings.Autonomy)
+	if m.planning {
+		info = fmt.Sprintf("%s · Planning · autonomy %d", name, m.cfg.Settings.Autonomy)
+	}
 	return ui.StatusBar(m.width, info, badge, colour) + "\n" + ui.InfoLine(m.width, m.infoParts())
 }
 
@@ -114,6 +119,9 @@ func (m Model) activitySlot(rows int) string {
 	case viewSettings:
 		p.Title, p.Hint, p.Accent = "Settings", "esc: back to activity", ui.Purple
 		p.Body = m.settingsVP.View()
+	case viewPlan:
+		p.Title, p.Hint, p.Accent = "Plan", "esc: back to activity", ui.Green
+		p.Body = m.planVP.View()
 	}
 	return p.Render()
 }
@@ -147,6 +155,8 @@ func (m Model) helpLine() string {
 	switch {
 	case m.quitting:
 		pairs = []string{"", "Stopping the agent and putting its label back…", "ctrl+c", "quit at once"}
+	case m.finished:
+		pairs = []string{"any key", "start menu", "ctrl+c", "quit"}
 	case m.focus == focusMenu:
 		pairs = []string{"↑/↓", "choose", "tab", "complete", "enter", "run", "esc", "close menu"}
 	case m.focus == focusCard:
@@ -159,7 +169,7 @@ func (m Model) helpLine() string {
 		pairs = []string{"pgup/pgdn", "scroll", "tab", "switch pane", "/", "commands", "esc", "back to typing"}
 	case m.view == viewSelect:
 		pairs = []string{"↑/↓", "select line", "enter", "open raw log there", "tab", "switch pane", "esc", "stop selecting"}
-	case m.view == viewStatus:
+	case m.view == viewStatus, m.view == viewPlan:
 		pairs = []string{"esc", "back", "pgup/pgdn", "scroll", "/", "commands", "tab", "switch pane"}
 	case m.view == viewLog:
 		pairs = []string{"pgup/pgdn", "scroll", "[ ]", "prev/next run", "g/G", "start/end", "esc", "back"}

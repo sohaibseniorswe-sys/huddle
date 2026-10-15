@@ -213,6 +213,11 @@ func (l *Loop) Run(ctx context.Context) int {
 	}
 }
 
+// Finished reports whether Run ended because the milestone is done, as
+// opposed to Ctrl+C or the end of the turn with Once. Call it only after
+// Run has returned.
+func (l *Loop) Finished() bool { return l.status.Phase == PhaseDone }
+
 func (l *Loop) interrupted() int {
 	l.printf("interrupted")
 	return ExitInterrupted

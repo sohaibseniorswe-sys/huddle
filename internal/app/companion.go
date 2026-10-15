@@ -140,6 +140,8 @@ func (m Model) handleCompanionReply(msg companionReplyMsg) (Model, tea.Cmd) {
 		}
 		m = m.addChat(companion.Entry{Time: now, Who: companion.WhoCompanion, Text: text})
 		switch {
+		case r.Plan != "":
+			m = m.takePlan(r.Plan)
 		case r.Decision != "":
 			m = m.showCard(card{kind: cardDecision, text: r.Decision, reason: r.Reason})
 		case r.Action != "":
@@ -298,6 +300,8 @@ func (m Model) describeScreen() string {
 		s = "Status view (/status)"
 	case viewSettings:
 		s = "Settings view (/settings, read-only)"
+	case viewPlan:
+		s = "The proposed plan in full (Show all on the plan card)"
 	case viewLog:
 		s = m.log.describe()
 	default:
@@ -332,8 +336,11 @@ func (m Model) stateLine() string {
 		line = fmt.Sprintf("no state label on #%d", m.cfg.Control.Number)
 	case loop.PhaseDone:
 		line = fmt.Sprintf("the milestone is finished, %d turns", s.Turn)
-	default:
+	case loop.PhaseStarting:
 		line = "starting"
+		if m.planning {
+			line = "plan mode: no milestone runs yet; the human is planning milestones with you"
+		}
 	}
 	if m.paused && s.Phase != loop.PhasePaused {
 		line += ", pause requested (no new turn after this one)"
@@ -344,6 +351,9 @@ func (m Model) stateLine() string {
 // milestoneLine describes the milestone's progress:
 // "Milestone 3, 4 of 7 issues closed (#59 #60 closed; #62 open)".
 func (m Model) milestoneLine() string {
+	if m.planning {
+		return "none yet (plan mode)"
+	}
 	if m.factsPending() {
 		return m.cfg.Milestone + " (issues not loaded yet)"
 	}

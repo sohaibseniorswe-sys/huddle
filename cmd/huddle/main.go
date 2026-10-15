@@ -6,7 +6,10 @@
 //
 // The first time it runs for a repo (no settings file yet), and with
 // `huddle setup`, it shows the setup wizard (package wizard). After the
-// startup checks it shows the run screen (package app), or with --plain
+// startup checks it shows the start menu (package start): plan new
+// milestones, run an existing one or resume an interrupted one. Then the
+// run screen (package app) runs the milestone, and every queued milestone
+// after it. --resume, --run and --plan skip the menu. With --plain it
 // prints the loop's lines to stdout as Huddle v1 did.
 package main
 
@@ -36,6 +39,7 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
 	"github.com/sohaibseniorswe-sys/huddle/internal/runner"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
+	"github.com/sohaibseniorswe-sys/huddle/internal/start"
 	"github.com/sohaibseniorswe-sys/huddle/internal/wizard"
 )
 
@@ -56,8 +60,12 @@ type deps struct {
 	// for the run screen).
 	runAgents func(dir, home string, team agents.Team, stream io.Writer) loop.Agents
 	clock     loop.Clock
-	// runUI shows the run screen while l runs and returns l's exit code.
-	runUI func(ctx context.Context, cfg app.Config, l *loop.Loop, stderr io.Writer) int
+	// runUI shows the run screen and returns the last loop's exit code,
+	// and whether to show the start menu again (app.Run).
+	runUI func(ctx context.Context, cfg app.Config, stderr io.Writer) (code int, startMenu bool)
+	// runStart shows the start menu and returns the human's choice
+	// (start.Run).
+	runStart func(ctx context.Context, facts start.Facts, settings string) (start.Choice, error)
 	// runWizard shows the setup wizard with c pre-selected and returns
 	// the settings it saved (wizard.Run).
 	runWizard func(ctx context.Context, wd wizard.Deps, c config.Config) (config.Config, error)
@@ -81,6 +89,7 @@ func main() {
 		},
 		clock:     loop.RealClock{},
 		runUI:     app.Run,
+		runStart:  start.Run,
 		runWizard: wizard.Run,
 		validate:  agents.Validate,
 	}))
@@ -97,6 +106,10 @@ type options struct {
 	// says whether the flag was given at all, because 0 is a valid level.
 	autonomy    int
 	autonomySet bool
+	// The start modes that skip the start menu; at most one is set.
+	resume   bool   // --resume: resume the interrupted milestone
+	runTitle string // --run "<milestone>": run that open milestone
+	plan     bool   // --plan: plan new milestones with the companion
 }
 
 func parseFlags(args []string, stderr io.Writer) (options, error) {
@@ -111,8 +124,11 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	// The default 0 is never used (autonomySet says whether the flag was
 	// given); a zero default keeps "(default 0)" out of the help text.
 	fs.IntVar(&o.autonomy, "autonomy", 0, "autonomy level for this run only, 0 (most careful) to 10 (most independent); overrides the settings file")
+	fs.BoolVar(&o.resume, "resume", false, "resume the interrupted milestone without showing the start menu")
+	fs.StringVar(&o.runTitle, "run", "", "run the open milestone with this title without showing the start menu")
+	fs.BoolVar(&o.plan, "plan", false, "plan new milestones with the companion without showing the start menu")
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: huddle [flags]\n       huddle [flags] setup\n\nRun from inside a local clone of the target repo.\n`huddle setup` runs the setup wizard again.\n\nFlags:\n")
+		fmt.Fprintf(stderr, "Usage: huddle [flags]\n       huddle [flags] setup\n\nRun from inside a local clone of the target repo.\nWithout --resume, --run or --plan, Huddle opens on the start menu.\n`huddle setup` runs the setup wizard again.\n\nFlags:\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -144,6 +160,18 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	if o.autonomySet && (o.autonomy < config.MinAutonomy || o.autonomy > config.MaxAutonomy) {
 		return o, fmt.Errorf("--autonomy: %d is outside %d–%d (0 is the most careful, 10 the most independent)",
 			o.autonomy, config.MinAutonomy, config.MaxAutonomy)
+	}
+	modes := 0
+	for _, set := range []bool{o.resume, o.runTitle != "", o.plan} {
+		if set {
+			modes++
+		}
+	}
+	if modes > 1 {
+		return o, errors.New("use only one of --resume, --run and --plan")
+	}
+	if o.plain && (o.plan || o.runTitle != "") {
+		return o, errors.New("--plan and --run need the run screen; leave out --plain")
 	}
 	return o, nil
 }
@@ -291,92 +319,227 @@ func run(ctx context.Context, args []string, d deps) int {
 	// buffered.
 	in := bufio.NewReader(d.stdin)
 
-	// Check 8: the control issue. With no open one, a control issue
-	// closed while its milestone still has open issues is offered for
-	// reopening (with --yes it is reopened).
-	control, err := checks.FindControlIssue(ctx, d.gh, target)
-	if errors.Is(err, checks.ErrNoControlIssue) {
-		closed, open, found, ferr := checks.FindUnfinishedControl(ctx, d.gh, target)
-		if ferr != nil {
-			return fail(ferr)
-		}
-		if found {
-			if !opts.yes && !checks.ChooseReopen(in, d.stdout, closed.Number, open) {
-				fmt.Fprintf(d.stdout, "left control issue #%d closed\n", closed.Number)
-				return 0
-			}
-			if err := d.gh.ReopenIssue(ctx, target, closed.Number); err != nil {
-				return fail(fmt.Errorf("reopen control issue #%d: %w", closed.Number, err))
-			}
-			ok("reopened control issue #%d", closed.Number)
-			control, err = closed, nil
-		}
-	}
+	// Check 8: a control issue closed while its milestone still has open
+	// issues is offered for reopening (with --yes it is reopened). This is
+	// asked only when no control issue is open at all.
+	reopened, stop, err := reopenUnfinished(ctx, d, target, in, opts.yes, ok)
 	if err != nil {
 		return fail(err)
 	}
-	state := "none"
-	if s := checks.States(control); len(s) > 0 {
-		state = strings.Join(s, ", ")
+	if stop {
+		return 0
 	}
-	ok("control issue #%d %q, milestone %q, state: %s", control.Number, control.Title, control.Milestone, state)
+
+	s := starter{d: d, opts: opts, cfg: cfg, team: team, versions: versions, home: home, target: target, root: root, exists: exists}
+	if opts.plain {
+		return s.runPlain(ctx, in, reopened)
+	}
+	return s.runScreens(ctx)
+}
+
+// reopenUnfinished is startup check 8 for a repo with no open control
+// issue: if a control issue was closed while its milestone still has open
+// issues, it asks whether to reopen it (yes reopens without asking).
+// stop is true when the human chose to leave it closed and exit.
+func reopenUnfinished(ctx context.Context, d deps, target string, in *bufio.Reader, yes bool, ok func(string, ...any)) (reopened *gh.Issue, stop bool, err error) {
+	_, err = checks.FindControlIssue(ctx, d.gh, target)
+	if !errors.Is(err, checks.ErrNoControlIssue) {
+		return nil, false, nil // one or more open control issues: nothing to reopen
+	}
+	closed, open, found, err := checks.FindUnfinishedControl(ctx, d.gh, target)
+	if err != nil || !found {
+		return nil, false, err
+	}
+	if !yes && !checks.ChooseReopen(in, d.stdout, closed.Number, open) {
+		fmt.Fprintf(d.stdout, "left control issue #%d closed\n", closed.Number)
+		return nil, true, nil
+	}
+	if err := d.gh.ReopenIssue(ctx, target, closed.Number); err != nil {
+		return nil, false, fmt.Errorf("reopen control issue #%d: %w", closed.Number, err)
+	}
+	ok("reopened control issue #%d", closed.Number)
+	closed.Closed = false
+	return &closed, false, nil
+}
+
+// starter starts milestones once the startup checks have passed: on the
+// run screen (with the start menu) or, with --plain, as Huddle v1 did.
+type starter struct {
+	d        deps
+	opts     options
+	cfg      config.Config
+	team     agents.Team
+	versions map[string]string
+	home     string
+	target   string
+	root     string // the repo's local clone
+	exists   bool   // the settings file exists
+}
+
+// runPlain is v1's start: the single open control issue, a confirmation,
+// then the loop printing to stdout. reopened is the control issue check 8
+// reopened, if any.
+func (s starter) runPlain(ctx context.Context, in *bufio.Reader, reopened *gh.Issue) int {
+	d := s.d
+	var control gh.Issue
+	var err error
+	if reopened != nil {
+		control = *reopened
+	} else if control, err = checks.FindControlIssue(ctx, d.gh, s.target); err != nil {
+		fmt.Fprintf(d.stderr, "✘ %v\n", err)
+		return 1
+	}
+	state := "none"
+	if st := checks.States(control); len(st) > 0 {
+		state = strings.Join(st, ", ")
+	}
+	fmt.Fprintf(d.stdout, "✔ control issue #%d %q, milestone %q, state: %s\n", control.Number, control.Title, control.Milestone, state)
 
 	// Check 9: confirmation.
-	if !opts.yes && !checks.Confirm(in, d.stdout) {
+	if !s.opts.yes && !checks.Confirm(in, d.stdout) {
 		fmt.Fprintln(d.stdout, "aborted")
 		return 1
 	}
+	l := s.newLoop(control, d.stdout)
+	l.Report = loop.PlainReporter{Out: d.stdout}
+	l.Controls = &loop.Controls{}
+	return l.Run(ctx)
+}
 
-	l := &loop.Loop{
-		Control:   gh.Control{Client: d.gh, Repo: target, Number: control.Number},
+// newLoop returns the watch loop for control. stream receives the agents'
+// raw output (nil on the run screen, where nothing may write to the
+// terminal but the screen). The caller sets Report and Controls.
+func (s starter) newLoop(control gh.Issue, stream io.Writer) *loop.Loop {
+	return &loop.Loop{
+		Control:   gh.Control{Client: s.d.gh, Repo: s.target, Number: control.Number},
 		Milestone: control.Milestone,
-		Team:      team,
-		Autonomy:  cfg.Autonomy,
-		Sessions:  session.New(home, target, control.Number),
-		Clock:     d.clock,
-		Once:      opts.once,
+		Agents:    s.d.runAgents(s.root, s.home, s.team, stream),
+		Team:      s.team,
+		Autonomy:  s.cfg.Autonomy,
+		Sessions:  session.New(s.home, s.target, control.Number),
+		Clock:     s.d.clock,
+		Once:      s.opts.once,
+	}
+}
+
+// runScreens shows the start menu (unless a start flag chose already) and
+// the run screen, again and again: when every milestone is done and the
+// queue is empty, a key press on the run screen brings the menu back.
+func (s starter) runScreens(ctx context.Context) int {
+	queue := start.NewQueue(s.home, s.target)
+	for {
+		ui, ok, code := s.choose(ctx, queue)
+		if !ok {
+			return code
+		}
+		code, again := s.d.runUI(ctx, ui, s.d.stderr)
+		if !again {
+			return code
+		}
+		// Back to the start menu: the flags chose only the first time.
+		s.opts.resume, s.opts.runTitle, s.opts.plan = false, "", false
+	}
+}
+
+// choose finds out what to run, from a start flag or the start menu, and
+// returns the run screen's config. ok is false when Huddle should exit
+// with code instead.
+func (s starter) choose(ctx context.Context, queue start.Queue) (cfg app.Config, ok bool, code int) {
+	d := s.d
+	queued, err := queue.Load()
+	if err != nil {
+		fmt.Fprintf(d.stderr, "✘ %v\n", err)
+		return app.Config{}, false, 1
+	}
+	facts, err := start.Load(ctx, d.gh, s.target, tildePath(s.root, d.lookupEnv), queued)
+	if err != nil {
+		fmt.Fprintf(d.stderr, "✘ %v\n", err)
+		return app.Config{}, false, 1
 	}
 
-	// --plain: the agents' raw output and Huddle's lines go to stdout.
-	if opts.plain {
-		l.Agents = d.runAgents(root, home, team, d.stdout)
-		l.Report = loop.PlainReporter{Out: d.stdout}
-		l.Controls = &loop.Controls{}
-		return l.Run(ctx)
+	var choice start.Choice
+	switch {
+	case s.opts.resume:
+		if facts.Resume == nil {
+			fmt.Fprintf(d.stderr, "✘ --resume: no open control issue on %s has a state:*-working, -ready or human-required label\n", s.target)
+			return app.Config{}, false, 1
+		}
+		choice = start.Choice{Kind: start.KindResume, Resume: *facts.Resume}
+	case s.opts.runTitle != "":
+		m, found := facts.FindMilestone(s.opts.runTitle)
+		if !found {
+			fmt.Fprintf(d.stderr, "✘ --run: %s has no open milestone titled %q\n", s.target, s.opts.runTitle)
+			return app.Config{}, false, 1
+		}
+		choice = start.Choice{Kind: start.KindRun, Milestone: m}
+	case s.opts.plan:
+		choice = start.Choice{Kind: start.KindPlan}
+	default:
+		choice, err = d.runStart(ctx, facts, app.SettingsText(s.screenConfig(gh.Issue{})))
+		if err != nil {
+			fmt.Fprintf(d.stderr, "huddle: %v\n", err)
+			return app.Config{}, false, 1
+		}
 	}
 
-	// The run screen: nothing may write to the terminal but the screen.
-	// The companion runs in the same clone, read-only.
-	l.Agents = d.runAgents(root, home, team, nil)
-	return d.runUI(ctx, app.Config{
-		Repo:      target,
+	switch choice.Kind {
+	case start.KindResume:
+		return s.screenConfig(choice.Resume), true, 0
+	case start.KindRun:
+		m := choice.Milestone
+		number, err := start.Prepare(ctx, d.gh, s.target, m.Title, m.Control, choice.Message)
+		if err != nil {
+			fmt.Fprintf(d.stderr, "✘ %v\n", err)
+			return app.Config{}, false, 1
+		}
+		return s.screenConfig(gh.Issue{Number: number, Milestone: m.Title}), true, 0
+	case start.KindPlan:
+		cfg := s.screenConfig(gh.Issue{})
+		cfg.Planning = true
+		return cfg, true, 0
+	}
+	return app.Config{}, false, 0 // Quit
+}
+
+// screenConfig returns the run screen's config with control as the first
+// milestone to run. A zero control (plan mode, or the settings page of
+// the start menu) keeps the companion's session and conversation in files
+// of their own, numbered 0.
+func (s starter) screenConfig(control gh.Issue) app.Config {
+	d := s.d
+	return app.Config{
+		Repo:      s.target,
 		Milestone: control.Milestone,
-		Control:   l.Control,
-		Team:      team,
+		Control:   gh.Control{Client: d.gh, Repo: s.target, Number: control.Number},
+		Team:      s.team,
 		Settings: app.Settings{
-			Home:               home,
-			Path:               config.Path(home, target),
-			Exists:             exists,
-			Autonomy:           cfg.Autonomy,
-			CompanionFollowsPM: cfg.Agents.Companion.SameAsPM,
-			Versions:           versions,
-			Sessions:           session.New(home, target, control.Number),
-			CompanionSessions:  session.NewCompanion(home, target, control.Number),
+			Home:               s.home,
+			Path:               config.Path(s.home, s.target),
+			Exists:             s.exists,
+			Autonomy:           s.cfg.Autonomy,
+			CompanionFollowsPM: s.cfg.Agents.Companion.SameAsPM,
+			Versions:           s.versions,
+			Sessions:           session.New(s.home, s.target, control.Number),
+			CompanionSessions:  session.NewCompanion(s.home, s.target, control.Number),
 		},
-		LogDir:  runner.LogDir(home),
-		RepoDir: root,
+		LogDir:  runner.LogDir(s.home),
+		RepoDir: s.root,
 		Now:     time.Now,
+		// The companion runs in the same clone, read-only.
 		Companion: companion.Agent{
-			Choice:    team.Companion,
-			Dir:       root,
-			Home:      home,
+			Choice:    s.team.Companion,
+			Dir:       s.root,
+			Home:      s.home,
 			Milestone: control.Milestone,
-			Sessions:  session.NewCompanion(home, target, control.Number),
+			Sessions:  session.NewCompanion(s.home, s.target, control.Number),
 			Run:       runner.Run,
 			Now:       time.Now,
 		},
-		History: companion.NewHistory(home, target, control.Number),
-	}, l, d.stderr)
+		History: companion.NewHistory(s.home, s.target, control.Number),
+		First:   control,
+		NewLoop: func(c gh.Issue) *loop.Loop { return s.newLoop(c, nil) },
+		Queue:   start.NewQueue(s.home, s.target),
+	}
 }
 
 // wizardDeps returns what the setup wizard needs, from d.

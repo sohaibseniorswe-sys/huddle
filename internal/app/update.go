@@ -41,11 +41,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.quitting {
 			return m, tea.Quit // /quit is complete: the label is back
 		}
+		if msg.Finished {
+			m.finished = true
+			m = m.addEvent(m.huddleEvent("The queue is empty: every milestone is done. Press any key for the start menu"))
+		}
+
+	case MilestoneMsg:
+		m, cmd = m.handleMilestone(msg)
+
+	case planAppliedMsg:
+		m = m.handlePlanApplied(msg)
 
 	case tickMsg:
 		m.now = m.cfg.Now()
 		cmd = tick()
-		if !m.fetching && m.now.Sub(m.lastFetch) >= factsInterval {
+		if !m.fetching && !m.planning && m.now.Sub(m.lastFetch) >= factsInterval {
 			cmd = tea.Batch(cmd, m.fetchFacts())
 			m.fetching = true
 		}
@@ -101,6 +111,12 @@ func (m Model) handleKey(k tea.KeyMsg) (Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		return m.runQuit()
+	}
+	// Every milestone is done and nothing is queued: any other key goes
+	// back to the start menu (Run returns startMenu = true).
+	if m.finished {
+		m.toStart = true
+		return m, tea.Quit
 	}
 	switch m.focus {
 	case focusMenu:
@@ -220,6 +236,8 @@ func (m Model) activityKey(k tea.KeyMsg) Model {
 		scroll(&m.statusVP, k)
 	case viewSettings:
 		scroll(&m.settingsVP, k)
+	case viewPlan:
+		scroll(&m.planVP, k)
 	case viewLog:
 		m = m.logKey(k)
 	}
@@ -384,6 +402,8 @@ func (m *Model) activityViewport() *viewport.Model {
 		return &m.statusVP
 	case viewSettings:
 		return &m.settingsVP
+	case viewPlan:
+		return &m.planVP
 	case viewLog:
 		return &m.log.vp
 	default:

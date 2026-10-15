@@ -1,0 +1,34 @@
+ HUDDLE  palantir · Planning · autonomy 8                                                ● Planning 
+ Milestone none yet: agree a plan with the companion  ·  Usage Codex ok · Claude ok  ·  Elapsed 0m  
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Activity                                                                                         │
+│ Nothing yet. What Huddle and the agents do appears here.                                         │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Companion                                                                                        │
+│ you  What should we do next?                                                                     │
+│                                                                                                  │
+│ companion  What should the next milestones do?                                                   │
+│                                                                                                  │
+│ you  Maps and exports first, then an admin dashboard. Create them.                               │
+│                                                                                                  │
+│ companion  Here is the plan we agreed. Press Agree and Huddle creates it.                        │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+│                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ PLAN                                                                  tab or /decision to answer │
+│ 2 milestones, 3 issues: Milestone 4 · Maps and exports (2 issues), Milestone 5 · Admin dashboard │
+│ (1 issue)                                                                                        │
+│ On Agree, Huddle creates them on GitHub and runs them one after another.                         │
+│   Agree      Show all      Keep talking                                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ companion › Type to talk to the companion, / for commands                                        │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ enter send  ·  tab answer the plan  ·  / commands  ·  ctrl+c quit                                  

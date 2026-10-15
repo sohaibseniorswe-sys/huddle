@@ -39,6 +39,10 @@ type Settings struct {
 	CompanionSessions session.Store
 }
 
+// SettingsText returns the settings as /settings shows them for cfg. The
+// start menu's Settings page shows the same text.
+func SettingsText(cfg Config) string { return New(cfg).settingsContent() }
+
 // openSettings shows /settings in the Activity slot and focuses it. Its
 // text is drawn now, because it reads the logs.
 func (m Model) openSettings() Model {
@@ -71,7 +75,7 @@ func (m Model) settingsContent() string {
 		section("Project"),
 		kv("Repo", m.cfg.Repo),
 		kv("Folder", m.tilde(m.cfg.RepoDir)),
-		kv("Control issue", fmt.Sprintf("#%d · %s", m.cfg.Control.Number, m.cfg.Milestone)),
+		kv("Control issue", m.controlText()),
 		"",
 		section("Agents"),
 	}
@@ -228,4 +232,13 @@ func plural(n int, noun string) string {
 // autonomyText is "8 · Autonomous", the level and its band's name.
 func autonomyText(level int) string {
 	return fmt.Sprintf("%d · %s", level, config.AutonomyName(level))
+}
+
+// controlText is the Control issue row: "#58 · Milestone 3", or "none
+// yet" before a milestone runs.
+func (m Model) controlText() string {
+	if m.cfg.Control.Number == 0 {
+		return "none yet"
+	}
+	return fmt.Sprintf("#%d · %s", m.cfg.Control.Number, m.cfg.Milestone)
 }

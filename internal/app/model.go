@@ -58,6 +58,7 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/companion"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
+	"github.com/sohaibseniorswe-sys/huddle/internal/start"
 	"github.com/sohaibseniorswe-sys/huddle/internal/ui"
 )
 
@@ -110,6 +111,25 @@ type Config struct {
 	CompanionCtx context.Context
 	// StopCompanion cancels CompanionCtx; nil means nothing to cancel.
 	StopCompanion context.CancelFunc
+
+	// Planning opens the screen in plan mode: the Companion pane open and
+	// no milestone running until a plan is agreed. Milestone and Control
+	// are then empty.
+	Planning bool
+	// First is the control issue to run first (not in plan mode).
+	First gh.Issue
+	// NewLoop returns the watch loop for a control issue. Run calls it for
+	// First and for every queued milestone after it; Run sets the loop's
+	// Report and Controls.
+	NewLoop func(control gh.Issue) *loop.Loop
+	// Queue is the milestone queue (docs/v3/issues/06-start-modes.md).
+	Queue start.Queue
+	// Send hands a message to the running program (Program.Send); Run
+	// sets it. Background commands use it to report progress.
+	Send func(tea.Msg)
+	// Begin tells the loop goroutine to start the first queued milestone,
+	// after a plan was agreed in plan mode; Run sets it.
+	Begin func()
 }
 
 // focus is the element that receives the keys. Exactly one has it.
@@ -132,6 +152,7 @@ const (
 	viewStatus               // /status
 	viewLog                  // /log: an agent's raw output
 	viewSettings             // /settings, read-only
+	viewPlan                 // a plan in full, from its card's Show all
 )
 
 // Model is the run screen's state. See the package comment for how Bubble
@@ -185,6 +206,14 @@ type Model struct {
 	queuePM       bool              // the next ask starts with the PM's question
 	card          card              // the card waiting for an answer, if any
 	historyErr    bool              // a history write failed and was reported
+
+	// Plan mode and the queue; see plan.go and run.go.
+	planning bool           // plan mode: no milestone runs yet
+	planText string         // the plan Show all opened
+	planVP   viewport.Model // scrolls it
+	queued   []int          // the milestone queue, as last read
+	finished bool           // the last milestone is done and nothing is queued
+	toStart  bool           // a key was pressed after finished: back to the start menu
 }
 
 // New returns the run screen's model for cfg.
@@ -208,13 +237,21 @@ func New(cfg Config) Model {
 		started:    now,
 		input:      in,
 		status:     loop.Status{Phase: loop.PhaseStarting, Since: now},
-		fetching:   true, // Init starts the first fetch
+		fetching:   !cfg.Planning, // Init starts the first fetch, unless planning
 		log:        logView{vp: viewport.New(0, 0)},
 		list:       viewport.New(0, 0),
 		statusVP:   viewport.New(0, 0),
 		settingsVP: viewport.New(0, 0),
 		chatVP:     viewport.New(0, 0),
+		planVP:     viewport.New(0, 0),
 		spin:       spin,
+		planning:   cfg.Planning,
+	}
+	m.queued = m.loadQueue()
+	if cfg.Planning {
+		// Plan mode is a conversation: the Companion pane is open from the
+		// start.
+		m.companionOpen = true
 	}
 	// The conversation of an earlier Huddle on this control issue comes
 	// back. Reading a small file here, before the screen starts, is fine.
@@ -231,6 +268,9 @@ func New(cfg Config) Model {
 // Init is called once by Bubble Tea when the program starts. The commands
 // it returns start the clock and the first GitHub refresh.
 func (m Model) Init() tea.Cmd {
+	if m.planning {
+		return tick() // no milestone yet, so no GitHub facts to read
+	}
 	return tea.Batch(tick(), m.fetchFacts())
 }
 

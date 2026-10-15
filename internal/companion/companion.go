@@ -32,10 +32,22 @@ import (
 //go:embed instructions.md
 var instructions string
 
-// Instructions returns the companion's instructions for milestone. They
-// open the first message of every new session.
+// planningLead replaces the first line about the milestone in plan mode,
+// when no milestone runs yet.
+const (
+	runningLead  = `You talk with the human while Huddle's agents work on milestone "{{milestone}}".`
+	planningLead = "You talk with the human, who is planning the next milestones with you; no milestone is running yet."
+)
+
+// Instructions returns the companion's instructions for milestone; ""
+// means plan mode, before any milestone runs. They open the first message
+// of every new session.
 func Instructions(milestone string) string {
-	return strings.ReplaceAll(strings.TrimRight(instructions, "\n"), "{{milestone}}", milestone)
+	text := strings.TrimRight(instructions, "\n")
+	if milestone == "" {
+		text = strings.Replace(text, runningLead, planningLead, 1)
+	}
+	return strings.ReplaceAll(text, "{{milestone}}", milestone)
 }
 
 // humanHeader introduces the human's own words after the context block.

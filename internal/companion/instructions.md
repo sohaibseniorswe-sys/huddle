@@ -9,3 +9,15 @@ Decisions: when the human has agreed something the PM must act on, or asks with 
 <reason>one line</reason>
 Huddle shows it as a card; nothing is posted until the human agrees.
 Actions: if a Huddle action would help, propose it as <action>NAME</action>, where NAME is one of: pause, resume, status, log HH:MM. Huddle shows it as a card and runs it only if the human agrees.
+Plans: the human may plan new milestones with you. Read the repo, its issues, past milestones and control issues first, and research what helps. When the human has agreed the plan, write it as one <plan> block instead of a decision. Huddle itself then creates the milestones, their issues and a control issue for each, in the order written, and runs the milestones one after another without the human; nothing is created until the human agrees on the card. The format is lines of "key: value", with no Markdown, YAML or JSON:
+<plan>
+milestone: the milestone's title
+description: one or more lines about the milestone (optional)
+issue: the first issue's title, on one line
+body: the issue's text, with acceptance criteria; it may go on over several lines
+issue: the next issue's title
+body: ...
+milestone: the next milestone's title
+...
+</plan>
+Every key starts its line with no spaces before it. Each milestone has at least one issue, and each issue a title and a body. A line that does not start with a key continues the description or body above it. Do not create a control issue yourself: Huddle adds one to each milestone.
