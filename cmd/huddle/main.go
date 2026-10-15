@@ -93,6 +93,10 @@ type options struct {
 	once    bool
 	plain   bool
 	repo    string
+	// autonomy is --autonomy, the level for this run only; autonomySet
+	// says whether the flag was given at all, because 0 is a valid level.
+	autonomy    int
+	autonomySet bool
 }
 
 func parseFlags(args []string, stderr io.Writer) (options, error) {
@@ -104,6 +108,9 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fs.BoolVar(&o.once, "once", false, "run a single turn, then stop (with --plain: exit)")
 	fs.BoolVar(&o.plain, "plain", false, "print plain lines to stdout instead of the full-screen UI (as v1 did)")
 	fs.StringVar(&o.repo, "repo", checks.DefaultRepo, "target repo as owner/name (for testing against the sandbox)")
+	// The default 0 is never used (autonomySet says whether the flag was
+	// given); a zero default keeps "(default 0)" out of the help text.
+	fs.IntVar(&o.autonomy, "autonomy", 0, "autonomy level for this run only, 0 (most careful) to 10 (most independent); overrides the settings file")
 	fs.Usage = func() {
 		fmt.Fprintf(stderr, "Usage: huddle [flags]\n       huddle [flags] setup\n\nRun from inside a local clone of the target repo.\n`huddle setup` runs the setup wizard again.\n\nFlags:\n")
 		fs.PrintDefaults()
@@ -126,6 +133,17 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	}
 	if err := checks.ValidateRepo(o.repo); err != nil {
 		return o, fmt.Errorf("--repo: %w", err)
+	}
+	// fs.Visit calls its function only for the flags given on the command
+	// line, so it tells "--autonomy 8" apart from the default.
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "autonomy" {
+			o.autonomySet = true
+		}
+	})
+	if o.autonomySet && (o.autonomy < config.MinAutonomy || o.autonomy > config.MaxAutonomy) {
+		return o, fmt.Errorf("--autonomy: %d is outside %d–%d (0 is the most careful, 10 the most independent)",
+			o.autonomy, config.MinAutonomy, config.MaxAutonomy)
 	}
 	return o, nil
 }
@@ -192,6 +210,14 @@ func run(ctx context.Context, args []string, d deps) int {
 		}
 	}
 
+	// --autonomy replaces the settings' level for this run only; the file
+	// is not changed. It is applied after the wizard, so `huddle setup`
+	// still shows and saves the file's own level.
+	if opts.autonomySet {
+		fmt.Fprintf(d.stdout, "autonomy: %d (--autonomy; the settings say %d)\n", opts.autonomy, cfg.Autonomy)
+		cfg.Autonomy = opts.autonomy
+	}
+
 	// Check 2: inside a git repo whose origin is the target. Outside one,
 	// the folder in the settings is used.
 	wd, err := d.getwd()
@@ -250,6 +276,7 @@ func run(ctx context.Context, args []string, d deps) int {
 	}
 	ok("settings %s", settingsPath)
 	ok("Dev: %s; PM: %s; companion: %s", team.Dev, team.PM, team.Companion)
+	ok("autonomy %d · %s", cfg.Autonomy, config.AutonomyName(cfg.Autonomy))
 
 	// Check 7: the agent CLIs in use, with subscription logins.
 	bins := usedBinaries(team)
@@ -304,6 +331,7 @@ func run(ctx context.Context, args []string, d deps) int {
 		Control:   gh.Control{Client: d.gh, Repo: target, Number: control.Number},
 		Milestone: control.Milestone,
 		Team:      team,
+		Autonomy:  cfg.Autonomy,
 		Sessions:  session.New(home, target, control.Number),
 		Clock:     d.clock,
 		Once:      opts.once,

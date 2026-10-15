@@ -1,4 +1,4 @@
- HUDDLE  palantir · Milestone 3 · control #58                                 ● Dev (Codex) working 
+ HUDDLE  palantir · Milestone 3 · control #58 · autonomy 8                    ● Dev (Codex) working 
  Issues 4/7 closed  ·  PRs #73 open  ·  CI green  ·  Usage Codex ok · Claude ok  ·  Elapsed 2h14m   
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Status  ◆ focused                                                          esc: back to activity │
@@ -7,7 +7,7 @@
 │ Open PRs      #73 export endpoint · CI running (1 of 2 checks)                                   │
 │ Main          green · last merge 22:41, PR #71                                                   │
 │ Decisions     none yet                                                                           │
-│ Autonomy      not set · the autonomy dial arrives in v3.5                                        │
+│ Autonomy      8 · Autonomous                                                                     │
 │ Usage         Codex ok · Claude Code ok · no waits                                               │
 │ Elapsed       2h14m · started 20:39                                                              │
 │                                                                                                  │

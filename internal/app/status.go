@@ -164,7 +164,7 @@ func (m Model) statusContent() string {
 		kv("Open PRs", plain(m.openPRsText())),
 		kv("Main", m.mainText()),
 		kv("Decisions", plain(m.decisionsText())),
-		kv("Autonomy", plain("not set · the autonomy dial arrives in v3.5")),
+		kv("Autonomy", plain(autonomyText(m.cfg.Settings.Autonomy))),
 		kv("Usage", plain(usage)),
 		kv("Elapsed", plain(elapsed(m.now.Sub(m.started))+" · started "+m.started.Format("15:04"))),
 		"",

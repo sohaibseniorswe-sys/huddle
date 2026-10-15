@@ -92,7 +92,7 @@ func (m Model) settingsContent() string {
 	rows = append(rows,
 		"",
 		section("Autonomy"),
-		kv("Level", fmt.Sprintf("%d · %s  (used from v3.5)", s.Autonomy, config.AutonomyName(s.Autonomy))),
+		kv("Level", autonomyText(s.Autonomy)),
 		"",
 		section("Files"),
 		kv("Logs", fmt.Sprintf("%s/  (%s of this repo)", m.tilde(m.cfg.LogDir), plural(len(runs), "run"))),
@@ -223,4 +223,9 @@ func plural(n int, noun string) string {
 		return "1 " + noun
 	}
 	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// autonomyText is "8 · Autonomous", the level and its band's name.
+func autonomyText(level int) string {
+	return fmt.Sprintf("%d · %s", level, config.AutonomyName(level))
 }

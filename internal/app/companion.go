@@ -271,12 +271,14 @@ func (m Model) askCompanion(message string, pmQuestion bool) tea.Cmd {
 }
 
 // companionContext fills in the parts of the context block the model
-// knows: the screen, the state, the milestone, the events and the card.
+// knows: the screen, the state, the milestone, the autonomy level, the
+// events and the card.
 func (m Model) companionContext() companion.Context {
 	c := companion.Context{
 		Screen:      m.describeScreen(),
 		State:       m.stateLine(),
 		Milestone:   m.milestoneLine(),
+		Autonomy:    m.cfg.Settings.Autonomy,
 		PendingCard: m.card.describe(),
 	}
 	for _, e := range m.events[max(len(m.events)-companion.MaxEvents, 0):] {

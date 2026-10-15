@@ -206,6 +206,7 @@ func (f *fixture) config(logDir string) Config {
 			PM:        agents.Choice{CLI: agents.Claude()},
 			Companion: agents.Choice{CLI: agents.Claude()},
 		},
+		Settings:  Settings{Autonomy: 8},
 		LogDir:    logDir,
 		RepoDir:   testRepoDir,
 		Now:       func() time.Time { return f.now },

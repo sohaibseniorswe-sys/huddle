@@ -809,11 +809,13 @@ func TestControlsWake(t *testing.T) {
 
 // TestSwappedRoles runs a Dev turn and a PM turn with Claude Code as the
 // Dev and Codex as the PM: the prompts, Huddle's lines and its comments
-// name the tool that really plays each role, and a Codex usage message
+// name the tool that really plays each role, the prompts carry the loop's
+// autonomy level, and a Codex usage message
 // counts for the PM.
 func TestSwappedRoles(t *testing.T) {
 	e := newEnv(t, gh.StateDevReady)
 	e.loop.Team = swappedTeam()
+	e.loop.Autonomy = 3
 	e.agents.steps = []func(context.Context, call) Result{
 		// The Dev stops without a label: Huddle hands over to the PM.
 		func(context.Context, call) Result {
@@ -835,10 +837,10 @@ func TestSwappedRoles(t *testing.T) {
 	if len(calls) != 3 || calls[0].role != session.Dev || calls[1].role != session.PM {
 		t.Fatalf("calls = %+v", calls)
 	}
-	if !strings.Contains(calls[0].prompt, "YOUR ROLE: DEV\nYou are the Dev agent (Claude Code).") {
+	if !strings.Contains(calls[0].prompt, "YOUR ROLE: DEV\nYou are the Dev agent (Claude Code), working at autonomy level 3.") {
 		t.Errorf("Dev prompt does not name Claude Code:\n%s", calls[0].prompt)
 	}
-	if !strings.Contains(calls[1].prompt, "YOUR ROLE: PM\nYou are the PM agent (Codex).") {
+	if !strings.Contains(calls[1].prompt, "YOUR ROLE: PM\nYou are the PM agent (Codex), working at autonomy level 3.") {
 		t.Errorf("PM prompt does not name Codex:\n%s", calls[1].prompt)
 	}
 	out := e.out.String()

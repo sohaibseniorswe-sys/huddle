@@ -86,7 +86,7 @@ func (m Model) sync() Model {
 func (m Model) projectPane() string {
 	badge, colour := m.badge()
 	name := m.cfg.Repo[strings.LastIndex(m.cfg.Repo, "/")+1:]
-	info := fmt.Sprintf("%s · %s · control #%d", name, m.cfg.Milestone, m.cfg.Control.Number)
+	info := fmt.Sprintf("%s · %s · control #%d · autonomy %d", name, m.cfg.Milestone, m.cfg.Control.Number, m.cfg.Settings.Autonomy)
 	return ui.StatusBar(m.width, info, badge, colour) + "\n" + ui.InfoLine(m.width, m.infoParts())
 }
 

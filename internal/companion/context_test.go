@@ -11,6 +11,7 @@ func TestContextString(t *testing.T) {
 		Screen:    `Log view, Codex turn 5, opened at 22:52:07 from the Activity line "$ gh pr create → PR #73"`,
 		State:     "state:dev-working, Dev (Codex) running for 12m, turn 5",
 		Milestone: "Milestone 3, 4 of 7 issues closed (#59 #60 #61 #63 closed; #62 #64 #65 open)",
+		Autonomy:  8,
 		Events:    []string{"22:52 codex $ gh pr create → PR #73", "22:52 codex Waiting for CI on PR #73"},
 		Comments:  []string{"pm at 23:03:\nUse JSON for the export."},
 		PMOutput:  "Handed #62 to Codex.",
@@ -19,6 +20,7 @@ func TestContextString(t *testing.T) {
 Screen: Log view, Codex turn 5, opened at 22:52:07 from the Activity line "$ gh pr create → PR #73"
 State: state:dev-working, Dev (Codex) running for 12m, turn 5
 Milestone: Milestone 3, 4 of 7 issues closed (#59 #60 #61 #63 closed; #62 #64 #65 open)
+Autonomy: level 8 of 0-10. The Dev hands over to the PM only for conflicts between issues, requirement changes or real blockers; the PM comes to the human only when the world is on fire: credentials, money, access, or no way forward.
 Last 2 activity events:
   22:52 codex $ gh pr create → PR #73
   22:52 codex Waiting for CI on PR #73
@@ -31,6 +33,28 @@ Running agent's latest output (last 40 lines): none
 Pending decision card: none`
 	if got := c.String(); got != want {
 		t.Errorf("String() =\n%s\n\nwant\n%s", got, want)
+	}
+}
+
+// TestAutonomyLine checks each band of the AUTONOMY table at its edges.
+func TestAutonomyLine(t *testing.T) {
+	for _, tc := range []struct {
+		level int
+		want  string
+	}{
+		{0, "after every issue and before every push or merge"},
+		{2, "after every issue and before every push or merge"},
+		{3, "PM after every issue; the PM comes to the human for product decisions."},
+		{5, "PM after every issue; the PM comes to the human for product decisions."},
+		{6, "only for conflicts between issues"},
+		{8, "only for conflicts between issues"},
+		{9, "only when completely blocked or done"},
+		{10, "the PM comes to the human only for credentials or money."},
+	} {
+		got := autonomyLine(tc.level)
+		if !strings.HasPrefix(got, fmt.Sprintf("level %d of 0-10. ", tc.level)) || !strings.Contains(got, tc.want) {
+			t.Errorf("autonomyLine(%d) = %q, want it to contain %q", tc.level, got, tc.want)
+		}
 	}
 }
 
