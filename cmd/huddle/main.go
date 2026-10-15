@@ -4,11 +4,14 @@
 // file says (package config); by default Codex is the Dev and Claude Code
 // the PM. See MVP_PLAN.md and docs/v3.
 //
-// After the startup checks it shows the run screen (package app), or with
-// --plain prints the loop's lines to stdout as Huddle v1 did.
+// The first time it runs for a repo (no settings file yet), and with
+// `huddle setup`, it shows the setup wizard (package wizard). After the
+// startup checks it shows the run screen (package app), or with --plain
+// prints the loop's lines to stdout as Huddle v1 did.
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -33,6 +36,7 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
 	"github.com/sohaibseniorswe-sys/huddle/internal/runner"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
+	"github.com/sohaibseniorswe-sys/huddle/internal/wizard"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
@@ -54,6 +58,11 @@ type deps struct {
 	clock     loop.Clock
 	// runUI shows the run screen while l runs and returns l's exit code.
 	runUI func(ctx context.Context, cfg app.Config, l *loop.Loop, stderr io.Writer) int
+	// runWizard shows the setup wizard with c pre-selected and returns
+	// the settings it saved (wizard.Run).
+	runWizard func(ctx context.Context, wd wizard.Deps, c config.Config) (config.Config, error)
+	// validate is the wizard's test run of a CLI, model and effort.
+	validate func(ctx context.Context, cli agents.CLI, model, effort string) error
 }
 
 func main() {
@@ -70,12 +79,15 @@ func main() {
 		runAgents: func(dir, home string, team agents.Team, stream io.Writer) loop.Agents {
 			return loop.CLIAgents{Dir: dir, Home: home, Team: team, Stream: stream}
 		},
-		clock: loop.RealClock{},
-		runUI: app.Run,
+		clock:     loop.RealClock{},
+		runUI:     app.Run,
+		runWizard: wizard.Run,
+		validate:  agents.Validate,
 	}))
 }
 
 type options struct {
+	setup   bool // `huddle setup`: run the setup wizard
 	version bool
 	yes     bool
 	once    bool
@@ -93,14 +105,24 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fs.BoolVar(&o.plain, "plain", false, "print plain lines to stdout instead of the full-screen UI (as v1 did)")
 	fs.StringVar(&o.repo, "repo", checks.DefaultRepo, "target repo as owner/name (for testing against the sandbox)")
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: huddle [flags]\n\nRun from inside a local clone of the target repo.\n\nFlags:\n")
+		fmt.Fprintf(stderr, "Usage: huddle [flags]\n       huddle [flags] setup\n\nRun from inside a local clone of the target repo.\n`huddle setup` runs the setup wizard again.\n\nFlags:\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
 		return o, err
 	}
-	if fs.NArg() > 0 {
-		return o, fmt.Errorf("unexpected arguments: %s", strings.Join(fs.Args(), " "))
+	// The flag package stops at the first argument that is not a flag, so
+	// `huddle setup --repo x` keeps its flags after "setup": parse them too.
+	args = fs.Args()
+	if len(args) > 0 && args[0] == "setup" {
+		o.setup = true
+		if err := fs.Parse(args[1:]); err != nil {
+			return o, err
+		}
+		args = fs.Args()
+	}
+	if len(args) > 0 {
+		return o, fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
 	}
 	if err := checks.ValidateRepo(o.repo); err != nil {
 		return o, fmt.Errorf("--repo: %w", err)
@@ -138,12 +160,48 @@ func run(ctx context.Context, args []string, d deps) int {
 		fmt.Fprintf(d.stdout, "target: %s (override)\n", target)
 	}
 
-	// Check 2: inside a git repo whose origin is the target.
+	// The project's settings: which CLI plays each role. Without a
+	// settings file, or with `huddle setup`, the wizard writes one first.
+	home, hasHome := d.lookupEnv("HOME")
+	if !hasHome || home == "" {
+		return fail(errors.New("HOME is not set"))
+	}
+	settingsPath := tildePath(config.Path(home, target), d.lookupEnv)
+	cfg, exists, err := config.Load(home, target)
+	if err != nil {
+		return fail(err)
+	}
+	if opts.setup || !exists {
+		if opts.plain {
+			// The wizard needs a terminal.
+			fmt.Fprintln(d.stderr, "Run huddle setup first")
+			return 2
+		}
+		cfg, err = d.runWizard(ctx, d.wizardDeps(home, target), cfg)
+		if errors.Is(err, wizard.ErrCanceled) {
+			fmt.Fprintln(d.stdout, err)
+			return 1
+		}
+		if err != nil {
+			return fail(err)
+		}
+		exists = true
+		ok("settings saved to %s", settingsPath)
+		if opts.setup {
+			return 0
+		}
+	}
+
+	// Check 2: inside a git repo whose origin is the target. Outside one,
+	// the folder in the settings is used.
 	wd, err := d.getwd()
 	if err != nil {
 		return fail(err)
 	}
 	root, err := gitx.TopLevel(ctx, wd)
+	if err != nil && cfg.Dir != "" {
+		root, err = gitx.TopLevel(ctx, cfg.Dir)
+	}
 	if err != nil {
 		return fail(fmt.Errorf("not inside a git repo: %w", err))
 	}
@@ -182,27 +240,15 @@ func run(ctx context.Context, args []string, d deps) int {
 		ok("gh logged in, repo access ok, labels ready")
 	}
 
-	// Check 6: the project's settings: which CLI plays each role.
-	home, hasHome := d.lookupEnv("HOME")
-	if !hasHome || home == "" {
-		return fail(errors.New("HOME is not set"))
-	}
-	cfg, exists, err := config.Load(home, target)
-	if err != nil {
-		return fail(err)
-	}
+	// Check 6: the settings are valid.
 	if err := cfg.Validate(); err != nil {
-		return fail(fmt.Errorf("settings %s: %w", tildePath(config.Path(home, target), d.lookupEnv), err))
+		return fail(fmt.Errorf("settings %s: %w", settingsPath, err))
 	}
 	team, err := cfg.Team()
 	if err != nil {
 		return fail(err) // Validate has checked the CLIs, so this does not happen
 	}
-	if exists {
-		ok("settings %s", tildePath(config.Path(home, target), d.lookupEnv))
-	} else {
-		ok("no settings file yet (huddle setup writes %s); using the defaults", tildePath(config.Path(home, target), d.lookupEnv))
-	}
+	ok("settings %s", settingsPath)
 	ok("Dev: %s; PM: %s; companion: %s", team.Dev, team.PM, team.Companion)
 
 	// Check 7: the agent CLIs in use, with subscription logins.
@@ -213,8 +259,32 @@ func run(ctx context.Context, args []string, d deps) int {
 	}
 	ok("%s installed with subscription logins, no API keys in env", strings.Join(bins, " and "))
 
-	// Check 8: the control issue.
+	// Both questions below read the same input. bufio.NewReader hands
+	// back a *bufio.Reader unchanged, so neither loses what the other
+	// buffered.
+	in := bufio.NewReader(d.stdin)
+
+	// Check 8: the control issue. With no open one, a control issue
+	// closed while its milestone still has open issues is offered for
+	// reopening (with --yes it is reopened).
 	control, err := checks.FindControlIssue(ctx, d.gh, target)
+	if errors.Is(err, checks.ErrNoControlIssue) {
+		closed, open, found, ferr := checks.FindUnfinishedControl(ctx, d.gh, target)
+		if ferr != nil {
+			return fail(ferr)
+		}
+		if found {
+			if !opts.yes && !checks.ChooseReopen(in, d.stdout, closed.Number, open) {
+				fmt.Fprintf(d.stdout, "left control issue #%d closed\n", closed.Number)
+				return 0
+			}
+			if err := d.gh.ReopenIssue(ctx, target, closed.Number); err != nil {
+				return fail(fmt.Errorf("reopen control issue #%d: %w", closed.Number, err))
+			}
+			ok("reopened control issue #%d", closed.Number)
+			control, err = closed, nil
+		}
+	}
 	if err != nil {
 		return fail(err)
 	}
@@ -225,7 +295,7 @@ func run(ctx context.Context, args []string, d deps) int {
 	ok("control issue #%d %q, milestone %q, state: %s", control.Number, control.Title, control.Milestone, state)
 
 	// Check 9: confirmation.
-	if !opts.yes && !checks.Confirm(d.stdin, d.stdout) {
+	if !opts.yes && !checks.Confirm(in, d.stdout) {
 		fmt.Fprintln(d.stdout, "aborted")
 		return 1
 	}
@@ -279,6 +349,25 @@ func run(ctx context.Context, args []string, d deps) int {
 		},
 		History: companion.NewHistory(home, target, control.Number),
 	}, l, d.stderr)
+}
+
+// wizardDeps returns what the setup wizard needs, from d.
+func (d deps) wizardDeps(home, target string) wizard.Deps {
+	return wizard.Deps{
+		Home:      home,
+		Target:    target,
+		Getwd:     d.getwd,
+		LookupEnv: d.lookupEnv,
+		TopLevel:  gitx.TopLevel,
+		RemoteURL: gitx.RemoteURL,
+		Commit:    gitx.Commit,
+		GH:        d.gh,
+		CheckCLI: func(ctx context.Context, binary string) (string, error) {
+			versions, err := d.agents.Check(ctx, []string{binary})
+			return versions[binary], err
+		},
+		Validate: d.validate,
+	}
 }
 
 // usedBinaries lists the CLIs that play a role in team, each once, in

@@ -16,12 +16,25 @@ const MainBranch = "main"
 // ControlLabel marks the control issue.
 const ControlLabel = "control"
 
+// ControlMarker in an issue's body also marks the control issue, so it is
+// found when its label has been removed. Huddle puts it in the body of
+// every control issue it creates.
+const ControlMarker = "<!-- huddle:control -->"
+
+// IsControl reports whether an issue with these labels and this body is a
+// control issue: it has the control label or the marker.
+func IsControl(labels []string, body string) bool {
+	return slices.ContainsFunc(labels, func(l string) bool { return strings.EqualFold(l, ControlLabel) }) ||
+		strings.Contains(body, ControlMarker)
+}
+
 // IssueState is an issue of a milestone, open or closed.
 type IssueState struct {
 	Number int
 	Title  string
 	Closed bool
 	Labels []string
+	Body   string
 }
 
 // PullRequest is a pull request with a summary of its checks.
@@ -94,7 +107,7 @@ func FetchFacts(ctx context.Context, c Client, repo, milestone string) (Facts, e
 	for _, is := range issues {
 		// The control issue belongs to the milestone too, but it is the
 		// agents' channel, not work to do.
-		if !slices.Contains(is.Labels, ControlLabel) {
+		if !IsControl(is.Labels, is.Body) {
 			f.Issues = append(f.Issues, is)
 		}
 	}
@@ -120,7 +133,7 @@ func FetchFacts(ctx context.Context, c Client, repo, milestone string) (Facts, e
 
 func (c CLI) MilestoneIssues(ctx context.Context, repo, milestone string) ([]IssueState, error) {
 	out, err := c.run(ctx, "issue", "list", "--repo", repo, "--milestone", milestone, "--state", "all",
-		"--json", "number,title,state,labels", "--limit", "1000")
+		"--json", "number,title,state,labels,body", "--limit", "1000")
 	if err != nil {
 		return nil, err
 	}
@@ -129,13 +142,14 @@ func (c CLI) MilestoneIssues(ctx context.Context, repo, milestone string) ([]Iss
 		Title  string
 		State  string
 		Labels []struct{ Name string }
+		Body   string
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
 		return nil, fmt.Errorf("parse gh issue list output: %w", err)
 	}
 	issues := make([]IssueState, len(raw))
 	for i, r := range raw {
-		issues[i] = IssueState{Number: r.Number, Title: r.Title, Closed: strings.EqualFold(r.State, "closed")}
+		issues[i] = IssueState{Number: r.Number, Title: r.Title, Closed: strings.EqualFold(r.State, "closed"), Body: r.Body}
 		for _, l := range r.Labels {
 			issues[i].Labels = append(issues[i].Labels, l.Name)
 		}

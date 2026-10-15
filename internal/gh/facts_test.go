@@ -62,6 +62,23 @@ func TestFetchFacts(t *testing.T) {
 	}
 }
 
+// The control issue never counts as work: when it is the only open issue,
+// every issue of the milestone is closed.
+func TestFetchFactsOnlyTheControlIssueOpen(t *testing.T) {
+	f := &Fake{Milestone: []IssueState{
+		{Number: 58, Labels: []string{"control", "state:pm-ready"}},
+		{Number: 59, Closed: true},
+		{Number: 60, Closed: true},
+	}}
+	facts, err := FetchFacts(context.Background(), f, "o/r", "M3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts.Issues) != 2 || len(facts.Closed()) != len(facts.Issues) {
+		t.Errorf("issues = %+v, want #59 and #60, all closed", facts.Issues)
+	}
+}
+
 func TestMainCI(t *testing.T) {
 	for _, tt := range []struct {
 		run  *Run

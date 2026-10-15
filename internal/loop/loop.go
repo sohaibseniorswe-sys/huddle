@@ -1,7 +1,7 @@
 // Package loop is Huddle's watch loop (MVP_PLAN.md section 8): it reads the
 // control issue's state label and starts whichever agent's turn it is. It
 // never judges the agents' work and never stops on its own; it stops only on
-// state:done, Ctrl+C or /quit (context cancel) or, with Once, after one turn.
+// state:done (or a closed control issue with nothing else open), Ctrl+C or /quit (context cancel) or, with Once, after one turn.
 //
 // The loop does not print. It reports what it does to a Reporter: the run
 // screen shows the reports, and with --plain they are printed as v1 did.
@@ -109,7 +109,8 @@ func escalateMarker(role session.Role) string {
 // errInterrupted reports that ctx was canceled.
 var errInterrupted = errors.New("interrupted")
 
-// Run runs the loop until state:done (ExitOK), Ctrl+C (ExitInterrupted), or
+// Run runs the loop until the milestone is done (ExitOK; see the StateDone
+// and StateClosed cases), Ctrl+C (ExitInterrupted), or
 // the end of the first turn with Once (ExitOK).
 func (l *Loop) Run(ctx context.Context) int {
 	hintShown := false  // "add state:dev-ready" reported for the current no-label spell
@@ -159,6 +160,24 @@ func (l *Loop) Run(ctx context.Context) int {
 				return ExitOK
 			}
 			continue // read the label again straight away
+
+		// Huddle's definition of done: the control issue has state:done
+		// (open or closed), or it is closed and every other issue of the
+		// milestone is closed too. A control issue closed while work is
+		// still open is reopened, and the loop goes on. Whether the GitHub
+		// milestone itself is closed does not matter.
+		case gh.StateClosed:
+			reopened, err := l.reopenIfWorkOpen(ctx)
+			if err != nil {
+				return l.interrupted()
+			}
+			if reopened {
+				continue // read the label it has and carry on
+			}
+			l.setStatus(PhaseDone, "", time.Time{})
+			l.printf("control issue #%d is closed and every other issue of the milestone is closed: the milestone is finished. Final report:", l.Control.Number)
+			l.reportLatestComment(ctx)
+			return ExitOK
 
 		case gh.StateDone:
 			l.setStatus(PhaseDone, "", time.Time{})
@@ -271,6 +290,21 @@ func (l *Loop) turnFor(ctx context.Context, role session.Role) error {
 		if err := l.retry(ctx, "read the label", func() (err error) { state, err = l.Control.State(ctx); return err }); err != nil {
 			return err
 		}
+		if state == gh.StateClosed {
+			l.printf("%s closed control issue #%d", l.roleName(role), l.Control.Number)
+			reopened, err := l.reopenIfWorkOpen(ctx)
+			if err != nil {
+				return err
+			}
+			if !reopened {
+				return nil // finished: Run reports it
+			}
+			// Carry on with the label the issue has, as if it had never
+			// been closed.
+			if err := l.retry(ctx, "read the label", func() (err error) { state, err = l.Control.State(ctx); return err }); err != nil {
+				return err
+			}
+		}
 		if state != working && state != "" {
 			l.printf("%s set %s", l.roleName(role), state)
 			return nil
@@ -345,6 +379,48 @@ func (l *Loop) turnFor(ctx context.Context, role session.Role) error {
 // the CLI that plays role.
 func (l *Loop) usageLimit(role session.Role, output string) agents.UsageLimit {
 	return agents.Usage(l.Team.For(role).CLI, output, l.Clock.Now())
+}
+
+// reopenedMarker marks the comment Huddle posts when it reopens a control
+// issue closed while work is still open.
+const reopenedMarker = "<!-- huddle:reopened -->"
+
+// reopenIfWorkOpen handles a control issue closed without state:done. If
+// other issues of the milestone are still open, it reopens the control
+// issue, says why in a comment, and reports true. If nothing is open the
+// milestone is finished and it reports false. It retries GitHub errors and
+// fails only on Ctrl+C.
+func (l *Loop) reopenIfWorkOpen(ctx context.Context) (bool, error) {
+	var open []int
+	if err := l.retry(ctx, "list the milestone's issues", func() (err error) {
+		open, err = l.Control.OpenWork(ctx, l.Milestone)
+		return err
+	}); err != nil {
+		return false, err
+	}
+	if len(open) == 0 {
+		return false, nil
+	}
+	list := issueList(open)
+	if err := l.retry(ctx, "reopen the control issue", func() error { return l.Control.Reopen(ctx) }); err != nil {
+		return false, err
+	}
+	body := fmt.Sprintf("%s\nHuddle reopened this control issue because issues %s are still open. "+
+		"The milestone is done when the control issue has state:done, or when it is closed and every other issue of the milestone is closed.", reopenedMarker, list)
+	if err := l.retry(ctx, "post the reopen comment", func() error { return l.Control.Comment(ctx, body) }); err != nil {
+		return false, err
+	}
+	l.printf("control issue #%d was closed while %s are still open; reopened it", l.Control.Number, list)
+	return true, nil
+}
+
+// issueList is "#4, #5".
+func issueList(numbers []int) string {
+	parts := make([]string, len(numbers))
+	for i, n := range numbers {
+		parts[i] = fmt.Sprintf("#%d", n)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // state reads the normalised state label, retrying on errors.

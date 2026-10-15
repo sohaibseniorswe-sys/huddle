@@ -20,6 +20,11 @@ const (
 	StateDone          = "state:done"
 )
 
+// StateClosed is not a label. Control.State returns it when the control
+// issue is closed without state:done. Whether the milestone is then
+// finished depends on its other issues (see Control.OpenWork).
+const StateClosed = "closed"
+
 // statePriority decides between several state labels on the control issue.
 // Agents may set a new label without removing the old one, so any label an
 // agent or the human sets beats a leftover *-working label set by Huddle.
@@ -42,12 +47,21 @@ type Control struct {
 // State reads the control issue's state label and normalises it: if several
 // known state labels are present, the first in priority order wins and every
 // other state:* label is removed. It returns "" if there is no known state
-// label (unknown state:* labels are then left alone).
+// label (unknown state:* labels are then left alone). A closed issue
+// changes nothing: State returns StateDone if it has state:done, and
+// StateClosed otherwise.
 func (c Control) State(ctx context.Context) (string, error) {
-	labels, err := c.Client.IssueLabels(ctx, c.Repo, c.Number)
+	is, err := c.Client.IssueView(ctx, c.Repo, c.Number)
 	if err != nil {
 		return "", fmt.Errorf("read labels on #%d: %w", c.Number, err)
 	}
+	if is.Closed {
+		if slices.ContainsFunc(is.Labels, func(l string) bool { return strings.EqualFold(l, StateDone) }) {
+			return StateDone, nil
+		}
+		return StateClosed, nil
+	}
+	labels := is.Labels
 	state := ""
 	for _, s := range statePriority {
 		if slices.ContainsFunc(labels, func(l string) bool { return strings.EqualFold(l, s) }) {
@@ -69,10 +83,11 @@ func (c Control) State(ctx context.Context) (string, error) {
 // SetState sets state on the control issue and removes every other state:*
 // label, in one edit.
 func (c Control) SetState(ctx context.Context, state string) error {
-	labels, err := c.Client.IssueLabels(ctx, c.Repo, c.Number)
+	is, err := c.Client.IssueView(ctx, c.Repo, c.Number)
 	if err != nil {
 		return fmt.Errorf("read labels on #%d: %w", c.Number, err)
 	}
+	labels := is.Labels
 	var add []string
 	if !slices.ContainsFunc(labels, func(l string) bool { return strings.EqualFold(l, state) }) {
 		add = []string{state}
@@ -85,10 +100,11 @@ func (c Control) SetState(ctx context.Context, state string) error {
 
 // RemoveLabel removes label from the control issue if it is there.
 func (c Control) RemoveLabel(ctx context.Context, label string) error {
-	labels, err := c.Client.IssueLabels(ctx, c.Repo, c.Number)
+	is, err := c.Client.IssueView(ctx, c.Repo, c.Number)
 	if err != nil {
 		return fmt.Errorf("read labels on #%d: %w", c.Number, err)
 	}
+	labels := is.Labels
 	i := slices.IndexFunc(labels, func(l string) bool { return strings.EqualFold(l, label) })
 	if i < 0 {
 		return nil
@@ -110,6 +126,30 @@ func (c Control) LatestComment(ctx context.Context) (comment Comment, ok bool, e
 		return Comment{}, false, nil
 	}
 	return comments[len(comments)-1], true, nil
+}
+
+// OpenWork returns the numbers of milestone's open issues, leaving out
+// control issues: the work still to do.
+func (c Control) OpenWork(ctx context.Context, milestone string) ([]int, error) {
+	issues, err := c.Client.MilestoneIssues(ctx, c.Repo, milestone)
+	if err != nil {
+		return nil, fmt.Errorf("list the issues of milestone %q: %w", milestone, err)
+	}
+	var open []int
+	for _, is := range issues {
+		if !is.Closed && is.Number != c.Number && !IsControl(is.Labels, is.Body) {
+			open = append(open, is.Number)
+		}
+	}
+	return open, nil
+}
+
+// Reopen reopens the control issue.
+func (c Control) Reopen(ctx context.Context) error {
+	if err := c.Client.ReopenIssue(ctx, c.Repo, c.Number); err != nil {
+		return fmt.Errorf("reopen #%d: %w", c.Number, err)
+	}
+	return nil
 }
 
 // Comment posts body on the control issue.
