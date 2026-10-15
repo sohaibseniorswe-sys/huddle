@@ -201,8 +201,8 @@ One entry per issue: when it was built, what was built, where it differs from th
 ## v3.6 Start modes
 
 - **Started:** 2026-10-14 21:02 EDT
-- **Finished:** FINISH (PR opened, CI started)
-- **Branch / PR:** `v3.6-start-modes` → `v3`, PRLINK
+- **Finished:** 2026-10-14 21:26 EDT (PR opened, CI started)
+- **Branch / PR:** `v3.6-start-modes` → `v3`, https://github.com/sohaibseniorswe-sys/huddle/pull/12
 
 ### What was built
 
