@@ -97,3 +97,65 @@ One entry per issue: when it was built, what was built, where it differs from th
 - The companion on Claude Code haiku at low effort still used backticks once despite the plain-text instruction. Larger models follow it better; the text is shown as typed either way.
 - Claude Code auto-updated from 2.1.299 to 2.1.300 during this session; nothing changed for Huddle.
 - I removed the test settings file for the sandbox, so the sandbox runs on the defaults again, and closed control issue #28 (the PM had left it open with `state:done`).
+
+## v3.4 Setup wizard
+
+- **Started:** 2026-10-14 16:20 EDT. A usage limit stopped the session at about 16:55; work resumed at 20:01.
+- **Finished:** FINISH_TIME
+- **Branch / PR:** `v3.4-setup-wizard` → `v3`, PR_LINK
+
+### What was built
+
+- **`internal/wizard`** (new): the nine-step wizard as a Bubble Tea model (`wizard.go` model and choices, `update.go` keys and steps, `view.go` drawing, `jobs.go` background jobs, `run.go` the program). It has the step list on the left (✓ and value for done steps, ▸ for the current one, later steps dimmed) and the current step's card below.
+  1. Finds the git repo around the current folder, or asks for one (`~` works).
+  2. Reads `origin`, checks it is the target repo, that `gh` is signed in, and that the account has write access (`viewerPermission` ADMIN, MAINTAIN or WRITE).
+  3. to 5. CLI, model and effort chips for each role. Models are the agent table's known ones plus **Custom…**, which opens a text field. Changing a CLI resets its model and effort. The companion can be "Same as PM".
+  6. Each CLI in use (installed, version, subscription login), no API keys, then one `agents.Validate` test run per role, one at a time, each with a spinner and then ✓ or the CLI's error. On a failed test run, Enter goes back to that role's step. Choices that passed are not tested again.
+  7. The autonomy dial, with the Dev and PM rows for the chosen band.
+  8. Creates missing labels. Offers starter `AGENTS.md`/`CLAUDE.md` (embedded templates, shown before writing). At autonomy 6 or above, warns about stop-and-wait rules, with line numbers.
+  9. A summary. Then it writes the settings file and the chosen starter files, and commits those files if you choose to.
+
+  Keys: ↑/↓, ←/→, Enter, Esc back one step with every choice kept, Ctrl+C quits without saving. Clicking a chip selects it.
+- **`internal/ui/setup.go`**: the setup bar, step rows, chips (`ChipAt` for clicks), fields and card, copied from `mockups.go`.
+- **`main`**: `huddle setup` (flags may come before or after `setup`) runs the wizard with the current settings and exits after saving. With no settings file, the wizard runs before anything else, and the start then continues with the new settings. `--plain` with no settings file (or `--plain setup`) prints "Run huddle setup first" and exits with status 2. Outside a git repo, the `dir` from the settings is used.
+- **`gh`**: `User`, `Permission`, `IssueView` (labels and open/closed; replaces `IssueLabels`), `ListIssues` (with bodies; replaces `ListOpenIssues`), `ReopenIssue`. **`gitx.Commit`** commits only the named files.
+- **Follow-up 1:** v3.3's finish time is now 16:00.
+- **Follow-up 2, operating principles** (prompts, MVP_PLAN.md section 9 and the golden tests): spec files are the source of truth (shared section); the Dev completes every issue except the control issue and never closes the control issue; the PM's definition of complete (every issue except the control issue closed, plus the README's Definition of Done and each issue's success criteria and evidence), then the final report, `state:done`, and closing the control issue; the PM states decisions, reasons and facts and never tells the Dev how to work.
+- **Follow-up 3, definition of done** (as revised during the session):
+  - `state:done` means done, whether the control issue is open or closed.
+  - Closed without `state:done` and nothing else open in the milestone: done.
+  - Closed with open issues, noticed during a run: Huddle reopens it, posts "Huddle reopened this control issue because issues #x, #y are still open" (marker `<!-- huddle:reopened -->`), and continues with the label it has.
+  - Found at startup: "Control issue #N is closed but K issues are still open" with 1) Reopen and continue / 2) Leave it and exit.
+  - Control issues are found by the `control` label or `<!-- huddle:control -->` in the body. Every "open issues" check leaves control issues out.
+  - Tests: `TestDoneByLabel`, `TestDoneByClosingWithNothingOpen`, `TestClosedDuringARunWithWorkOpenIsReopened`, `TestClosedAtFirstReadWithWorkOpen`, `TestOnlyTheControlIssueOpenIsNotDone`, `TestControlStateClosed`, `TestControlOpenWork`, `TestFetchFactsOnlyTheControlIssueOpen`, `TestStartupClosedControlIssueWithWorkOpen` (reopen, leave, `--yes`), `TestStartupClosedControlIssueNothingOpen`, `TestChooseReopen`, `TestFindControlIssue` ("found by marker when the label is missing"), `TestFindUnfinishedControl`.
+- **Follow-up 4:** `~/.huddle/projects/sohaibseniorswe-sys_palantir.yaml` holds the defaults with `dir: /home/sweeng/projects/palantir` and `agents.dev.effort: medium`. It was written with `config.Save`, then loaded again and checked with `config.Validate` (passes).
+
+### How the success criteria were checked
+
+- **Fresh clone opens the wizard; the next start skips it.** `TestFirstRunOpensTheWizardThenSkipsIt` (main). By hand: see the sandbox run below. After it, `huddle` in that clone went straight to the startup checks.
+- **`huddle setup` pre-selects every current value.** `TestSetupPreselectsCurrentValues` (custom model shown as Custom…, every role, effort and autonomy) and `TestSetupRunsTheWizardWithTheCurrentSettings` (main).
+- **Screens 11, 12, 13 at 100 × 34.** Golden tests `11-wizard-pm`, `12-wizard-companion`, `13-wizard-autonomy`.
+- **Bad custom model.** `TestBadCustomModelGoesBackToItsStep` runs the real `agents.Validate` against a fake `claude` that answers with Claude Code's recorded rejection. Step 6 shows `Claude Code rejected model "opux": There's an issue with the selected model (opux)...`, and Enter returns to the PM step with "opux" kept.
+- **Changing a CLI resets effort.** `TestChangingCLIResetsEffort` (Codex `none` → Claude Code `medium`).
+- **AGENTS.md conflicts at 8, not 3.** `TestConflicts` and `TestPrepareWarnsAboutConflictingRules` (sample files, warnings with line numbers on screen at 8, none at 3; never blocks).
+- **Esc at every step.** `TestEscGoesBackOneStepKeepingChoices` walks from step 9 back to step 1 and compares the whole configuration after each Esc.
+- Also: `TestFolderStep`, `TestRepoStepErrors`, `TestSaveWritesSettingsAndStarterFiles` (nothing written before step 9; starter written; skipped file not written; commit of exactly the new file), `TestCtrlCQuitsWithoutSaving`, `TestClickAChip`, `TestLongFolderFits`, `TestPlainWithoutSettings`, `TestWizardCanceled`.
+- **Manual sandbox check:** SANDBOX_RESULT
+
+### Deviations from the spec
+
+- **The target repo is still `--repo` or palantir.** Step 2 checks that `origin` is that repo. If it is another repo, the error says to run `huddle --repo <that repo> setup`. The wizard does not switch targets by itself.
+- **`huddle setup` exits after saving.** A first-run wizard continues into the run.
+- **Card width 74, not 70**, so Claude Code's five model chips (Fable 5.1 is in the agent table) fit on one row. **The PM note** ("Either CLI can play either role; Codex as PM saves Claude Code's limits") is added under screen 11's text, as the spec asks. **Step 3 shows the model's label** ("GPT-6.1 Sol") as the other roles do; the mockup shows `gpt-6.1-sol`.
+- **An empty model in the settings pre-selects the CLI's first known model**, because there is no "CLI default" chip. Saving then writes that model (for example `opus`) instead of an empty value.
+- **The folder text field is always shown**, pre-filled with the detected repo (or the settings' `dir`), so a different folder can be typed even when one is detected.
+- **Nothing is written before step 9:** starter files are shown at step 8 and written at step 9, then committed if chosen (not pushed). Labels are created on GitHub at step 8, as the spec says, so Ctrl+C after step 8 leaves them.
+- **More conflict phrases:** besides the spec's four, also "do not push", "don't push", "never merge" and "don't merge". CLAUDE.md is scanned too. The starter AGENTS.md is written to cause no warning at any level.
+- **The startup choice is a plain prompt** (`Choose [1/2]`, empty = 1) among the startup checks, because those run before the run screen opens. `--yes` picks Reopen. At startup, only the five most recently closed control issues are examined, and only one without `state:done` whose milestone still has open issues is offered.
+- **Huddle never creates control issues yet** (that comes in v3.6), so the marker is only defined (`gh.ControlMarker`) and used to find them. The sandbox control issue made for this run has it.
+- **Two bugs found in the manual run and fixed:** a long folder path wrapped the setup bar and the folder field (now cut with "…" and scrolled). Step 6's label column was too narrow for "Claude Code".
+
+### Needs you
+
+- Nothing blocking.
+- The palantir settings use the CLI defaults except the Dev's effort (`medium`). Run `huddle setup` in `~/projects/palantir` to pick models through the wizard.

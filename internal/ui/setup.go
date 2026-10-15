@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // The setup wizard's pieces (screens 11, 12 and 13 in docs/v3/screens).
@@ -22,6 +23,8 @@ func SetupBar(width int, where string, step, total int) string {
 	head := lipgloss.NewStyle().Bold(true).Foreground(White).Background(Purple).Padding(0, 1).Render("HUDDLE SETUP")
 	right := lipgloss.NewStyle().Foreground(Text).Background(BarBg).Padding(0, 1).Render(fmt.Sprintf("step %d of %d", step, total))
 	room := width - lipgloss.Width(head) - lipgloss.Width(right)
+	// Cut a long folder with "…" so it never wraps onto a second row.
+	where = ansi.Truncate(where, max(room-2, 0), "…")
 	middle := lipgloss.NewStyle().Foreground(Text).Background(BarBg).Padding(0, 1).
 		Width(max(room, 0)).MaxWidth(max(room, 0)).Render(where)
 	return head + middle + right

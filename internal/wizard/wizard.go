@@ -171,11 +171,22 @@ func New(deps Deps, c config.Config) Model {
 	// A cursor that does not blink: blinking needs a timer message
 	// several times a second, for nothing a setup screen needs.
 	m.folder.Cursor.SetMode(cursor.CursorStatic)
+	m.folder.Width = m.inputWidth()
 	m.folder.SetValue(c.Dir)
 	m.folder.Focus()
 	m.roles[roleDev] = fromConfig(c.Agents.Dev)
 	m.roles[rolePM] = fromConfig(c.Agents.PM)
 	m.roles[roleComp] = fromConfig(c.Agents.Companion.Agent)
+	m = m.sizeInputs()
+	return m
+}
+
+// sizeInputs fits the text inputs to the card.
+func (m Model) sizeInputs() Model {
+	m.folder.Width = m.inputWidth()
+	for i := range m.roles {
+		m.roles[i].custom.Width = m.inputWidth()
+	}
 	return m
 }
 

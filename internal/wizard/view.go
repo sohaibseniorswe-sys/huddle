@@ -22,6 +22,9 @@ const (
 	cardPadY    = 1  // the card's padding above and below
 	helpRows    = 1
 	previewRows = 6 // lines of a starter file shown in step 8
+	// checkLabelWidth fits the longest label in step 6, "Claude Code",
+	// and a space.
+	checkLabelWidth = 12
 )
 
 // View draws the wizard at the terminal's size.
@@ -140,6 +143,10 @@ func (m Model) fieldsBlock() string {
 	return strings.Join(rows, "\n\n")
 }
 
+// inputWidth is the width of a text input in a card: the text scrolls
+// inside it instead of wrapping onto a second row.
+func (m Model) inputWidth() int { return m.innerWidth() - ui.FieldMarkWidth - ui.FieldLabelWidth - 1 }
+
 // innerWidth is the width of the card's content.
 func (m Model) innerWidth() int { return m.cardWidth() - 2*cardPadX }
 
@@ -148,7 +155,9 @@ func (m Model) pre() string {
 	if m.step != stepSave {
 		return ""
 	}
-	row := func(k, v string) string { return ui.Muted.Width(11).Render(k) + ui.Plain.Render(v) }
+	row := func(k, v string) string {
+		return ansi.Truncate(ui.Muted.Width(11).Render(k)+ui.Plain.Render(v), m.innerWidth(), "…")
+	}
 	rows := []string{
 		row("Folder", tilde(m.dir, m.deps.Home)),
 		row("Repo", m.deps.Target),
@@ -253,7 +262,8 @@ func (m Model) checksNote() string {
 		case checkPending:
 			mark = ui.Muted.Render("·")
 		case checkRunning:
-			mark = m.spinner.View()
+			// The spinner's frames end in a space; the other marks do not.
+			mark = strings.TrimSpace(m.spinner.View())
 		case checkOK:
 			mark = ui.Fg(ui.Green).Render("✓")
 		case checkFailed:
@@ -277,7 +287,7 @@ func (m Model) checksNote() string {
 		} else if r.state == checkOK {
 			text += ui.Muted.Render("   " + r.detail)
 		}
-		line := ansi.Truncate(mark+" "+ui.Plain.Width(11).Render(r.label)+text, m.innerWidth(), "…")
+		line := ansi.Truncate(mark+" "+ui.Plain.Width(checkLabelWidth).Render(r.label)+text, m.innerWidth(), "…")
 		rows = append(rows, line)
 		if r.state == checkFailed {
 			msg := ui.Fg(ui.Red).Width(m.innerWidth() - 2).Render(r.detail)

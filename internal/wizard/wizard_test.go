@@ -542,3 +542,25 @@ func TestClickAChip(t *testing.T) {
 		t.Errorf("focused field = %v, want the model", f.id)
 	}
 }
+
+// A long folder never makes a row wider than the screen or wrap.
+func TestLongFolderFits(t *testing.T) {
+	dir := "/tmp/claude-1000/-home-sweeng-projects-huddle/a77d3e10-31c2-43d6-8eae-1332d45bf758/scratchpad/sandbox-v34"
+	h := newHarness(t, dir, palantirConfig(), nil)
+	for _, step := range []int{stepFolder, stepRepo, stepDev} {
+		h.wantStep(step)
+		view := h.m.View()
+		if n := lipgloss.Height(view); n != testHeight {
+			t.Errorf("step %d: %d rows, want %d", step, n, testHeight)
+		}
+		for i, line := range strings.Split(view, "\n") {
+			if w := lipgloss.Width(line); w != testWidth {
+				t.Errorf("step %d: row %d is %d wide:\n%s", step, i, w, view)
+			}
+		}
+		if step == stepFolder && strings.Count(view, "scratchpad/sandbox-v34") != 1 {
+			t.Errorf("the folder field wraps or is missing:\n%s", view)
+		}
+		h.keys("enter")
+	}
+}
