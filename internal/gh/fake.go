@@ -30,6 +30,15 @@ type Fake struct {
 	Merged        *PullRequest  // the last merged pull request; nil if none
 	MainRun       *Run          // the latest run on any branch; nil if none
 	FactsRequests int           // number of MilestoneIssues calls, i.e. fetches
+
+	// Milestones and issue creation (the start menu and plan mode).
+	Milestones  []Milestone // open milestones; CreateMilestone adds to it
+	CreateErrAt int         // if > 0, the CreateErrAt-th create call (milestone or issue) fails
+	creates     int         // create calls so far
+	// Log records every milestone and issue created and every body
+	// edited, in order: "milestone M4", "issue #12 M4: Add export",
+	// "body #12".
+	Log []string
 }
 
 var _ Client = (*Fake)(nil)
@@ -179,4 +188,60 @@ func (f *Fake) LatestRun(context.Context, string, string) (Run, bool, error) {
 		return Run{}, false, f.FactsErr
 	}
 	return *f.MainRun, true, nil
+}
+
+func (f *Fake) ListMilestones(context.Context, string) ([]Milestone, error) {
+	if f.ListErr != nil {
+		return nil, f.ListErr
+	}
+	return slices.Clone(f.Milestones), nil
+}
+
+// createFails counts a create call and reports whether it is the one
+// CreateErrAt makes fail.
+func (f *Fake) createFails() bool {
+	f.creates++
+	return f.CreateErrAt > 0 && f.creates == f.CreateErrAt
+}
+
+func (f *Fake) CreateMilestone(_ context.Context, _, title, description string) (int, error) {
+	if f.createFails() {
+		return 0, fmt.Errorf("create milestone %q: HTTP 502", title)
+	}
+	n := len(f.Milestones) + 1
+	for _, m := range f.Milestones {
+		n = max(n, m.Number+1)
+	}
+	f.Milestones = append(f.Milestones, Milestone{Number: n, Title: title, Description: description})
+	f.Log = append(f.Log, "milestone "+title)
+	return n, nil
+}
+
+// CreateIssue adds an open issue numbered one above the highest so far.
+func (f *Fake) CreateIssue(_ context.Context, _ string, is NewIssue) (int, error) {
+	if f.createFails() {
+		return 0, fmt.Errorf("create issue %q: HTTP 502", is.Title)
+	}
+	n := 1
+	for _, old := range f.Issues {
+		n = max(n, old.Number+1)
+	}
+	f.Issues = append(f.Issues, Issue{Number: n, Title: is.Title, Body: is.Body, Milestone: is.Milestone, Labels: slices.Clone(is.Labels)})
+	for i := range f.Milestones {
+		if f.Milestones[i].Title == is.Milestone {
+			f.Milestones[i].OpenIssues++
+		}
+	}
+	f.Log = append(f.Log, fmt.Sprintf("issue #%d %s: %s", n, is.Milestone, is.Title))
+	return n, nil
+}
+
+func (f *Fake) EditBody(_ context.Context, _ string, number int, body string) error {
+	is, err := f.issue(number)
+	if err != nil {
+		return err
+	}
+	is.Body = body
+	f.Log = append(f.Log, fmt.Sprintf("body #%d", number))
+	return nil
 }

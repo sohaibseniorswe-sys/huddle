@@ -86,3 +86,23 @@ func TestParse(t *testing.T) {
 		})
 	}
 }
+
+func TestParsePlan(t *testing.T) {
+	reply := "Here is the plan we agreed.\n\n<plan>\nmilestone: M4\nissue: Export\nbody: Line one\n  line two\n</plan>\n\nSay Agree when ready.\n" +
+		"<decision>ignored, the plan wins</decision>\n<action>pause</action>"
+	r := Parse(reply)
+	if want := "milestone: M4\nissue: Export\nbody: Line one\n  line two"; r.Plan != want {
+		t.Errorf("Plan = %q\nwant %q", r.Plan, want)
+	}
+	if r.Decision != "" || r.Action != "" {
+		t.Errorf("decision %q and action %q next to a plan", r.Decision, r.Action)
+	}
+	if r.Text != "Here is the plan we agreed.\n\nSay Agree when ready." {
+		t.Errorf("Text = %q", r.Text)
+	}
+
+	// A plan inside a code fence is an example.
+	if r := Parse("For example:\n```\n<plan>\nmilestone: X\n</plan>\n```"); r.Plan != "" {
+		t.Errorf("fenced plan used: %q", r.Plan)
+	}
+}

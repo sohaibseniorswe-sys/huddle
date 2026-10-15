@@ -11,11 +11,13 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/commands"
 	"github.com/sohaibseniorswe-sys/huddle/internal/companion"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
+	"github.com/sohaibseniorswe-sys/huddle/internal/start"
 	"github.com/sohaibseniorswe-sys/huddle/internal/ui"
 )
 
-// This file is the cards: a decision or an action the companion proposed,
-// waiting in the slot above the text field until the human answers it.
+// This file is the cards: a decision, an action or a plan the companion
+// proposed, waiting in the slot above the text field until the human
+// answers it. (What an agreed plan does is in plan.go.)
 //
 // A card never takes the keyboard by itself. While it waits, the text field
 // keeps the focus and the card's buttons are greyed out; Tab, /decision or
@@ -29,12 +31,16 @@ const (
 	cardNone     cardKind = iota // no card waits
 	cardDecision                 // a decision to post on the control issue
 	cardAction                   // a Huddle action: pause, resume, status, log HH:MM
+	cardPlan                     // a plan: milestones and issues for Huddle to create
 )
 
-// The buttons. Agree is always the first.
+// The buttons. Agree is always the first. A decision or action card has
+// Agree and a "no" button; a plan card has Agree, Show all and Keep
+// talking.
 const (
-	buttonAgree = 0
-	buttonNo    = 1
+	buttonAgree   = 0
+	buttonNo      = 1
+	buttonShowAll = 1 // plan cards only
 )
 
 // decisionMarker opens every decision Huddle posts, so agents and people
@@ -44,15 +50,30 @@ const decisionMarker = "<!-- huddle:decision -->"
 // card is the card waiting for an answer.
 type card struct {
 	kind   cardKind
-	text   string // the decision, or the action ("pause", "log 22:52")
-	reason string // a decision's one-line reason; may be ""
-	sel    int    // the chosen button: buttonAgree or buttonNo
+	text   string     // the decision, or the action ("pause", "log 22:52")
+	reason string     // a decision's one-line reason; may be ""
+	plan   start.Plan // a plan card's plan
+	sel    int        // the index of the chosen button
+}
+
+// buttons returns the card's button labels, Agree first.
+func (c card) buttons() []string {
+	switch c.kind {
+	case cardAction:
+		return []string{"Agree", "Not now"}
+	case cardPlan:
+		return []string{"Agree", "Show all", "Keep talking"}
+	}
+	return []string{"Agree", "Keep talking"}
 }
 
 // noun names the card for the help line.
 func (c card) noun() string {
-	if c.kind == cardAction {
+	switch c.kind {
+	case cardAction:
 		return "action"
+	case cardPlan:
+		return "plan"
 	}
 	return "decision"
 }
@@ -68,6 +89,8 @@ func (c card) describe() string {
 		return s + ", not answered yet"
 	case cardAction:
 		return fmt.Sprintf("action %q, not answered yet", c.text)
+	case cardPlan:
+		return fmt.Sprintf("plan (%s): %s, not answered yet", c.plan.Summary(), planTitles(c.plan))
 	}
 	return ""
 }
@@ -112,7 +135,7 @@ func (m Model) cardView(rows int) ui.Card {
 		Title:    "DECISION",
 		Accent:   ui.Green,
 		Text:     m.card.text,
-		Buttons:  [2]string{"Agree", "Keep talking"},
+		Buttons:  m.card.buttons(),
 		Selected: m.card.sel,
 		Focused:  m.focus == focusCard,
 		Width:    m.width,
@@ -121,10 +144,14 @@ func (m Model) cardView(rows int) ui.Card {
 	if m.card.reason != "" {
 		c.Note = "Reason: " + m.card.reason
 	}
-	if m.card.kind == cardAction {
+	switch m.card.kind {
+	case cardAction:
 		c.Title, c.Accent = "ACTION", ui.Purple
 		c.Text = "Suggested action: " + actionText(m.card.text)
-		c.Buttons = [2]string{"Agree", "Not now"}
+	case cardPlan:
+		c.Title = "PLAN"
+		c.Text = fmt.Sprintf("%s: %s", m.card.plan.Summary(), planTitles(m.card.plan))
+		c.Note = planNote
 	}
 	return c
 }
@@ -139,9 +166,9 @@ func (m Model) cardKey(k tea.KeyMsg) (Model, tea.Cmd) {
 	}
 	switch k.Type {
 	case tea.KeyLeft:
-		m.card.sel = buttonAgree
+		m.card.sel = max(m.card.sel-1, 0)
 	case tea.KeyRight:
-		m.card.sel = buttonNo
+		m.card.sel = min(m.card.sel+1, len(m.card.buttons())-1)
 	case tea.KeyEnter:
 		return m.confirmCard()
 	case tea.KeyEsc:
@@ -156,12 +183,18 @@ func (m Model) cardKey(k tea.KeyMsg) (Model, tea.Cmd) {
 // so a second Enter cannot post a decision twice.
 func (m Model) confirmCard() (Model, tea.Cmd) {
 	c := m.card
+	if c.kind == cardPlan && c.sel == buttonShowAll {
+		return m.showPlan(c.plan), nil // the card stays until it is answered
+	}
 	m = m.clearCard()
-	if c.sel == buttonNo {
+	if c.sel != buttonAgree {
 		return m, nil // Keep talking or Not now: nothing happens anywhere
 	}
-	if c.kind == cardAction {
+	switch c.kind {
+	case cardAction:
 		return m.runAction(c.text)
+	case cardPlan:
+		return m.agreePlan(c.plan)
 	}
 	m = m.addEvent(m.huddleEvent(fmt.Sprintf("Posting the decision on #%d…", m.cfg.Control.Number)))
 	return m, m.postDecision(c)

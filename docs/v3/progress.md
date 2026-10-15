@@ -162,7 +162,7 @@ One entry per issue: when it was built, what was built, where it differs from th
 
 ## v3.5 Autonomy level
 
-- **Started:** 2026-10-14 20:55 EDT
+- **Started:** 2026-10-14 20:55 EDT (checked against git on 2026-10-14: the `v3.5-autonomy-level` branch was created at 20:55:20 from `e9ded0d` and the session's first message arrived at 20:55:13; the v3.5 commit is 20:59:37. 20:55 stands. The earlier session ended at 20:54 after v3.4's finish-time commit at 20:09, and no v3.5 work happened before 20:55)
 - **Finished:** 2026-10-14 20:59 EDT (PR opened, CI started)
 - **Branch / PR:** `v3.5-autonomy-level` → `v3`, https://github.com/sohaibseniorswe-sys/huddle/pull/11
 
@@ -197,3 +197,45 @@ One entry per issue: when it was built, what was built, where it differs from th
 ### Needs you
 
 - **Calibration runs** at levels 3, 8 and 10 on the sandbox, when you want them. Until then, nothing shows that the agents follow their rows.
+
+## v3.6 Start modes
+
+- **Started:** 2026-10-14 21:02 EDT
+- **Finished:** 2026-10-14 21:26 EDT (PR opened, CI started)
+- **Branch / PR:** `v3.6-start-modes` → `v3`, https://github.com/sohaibseniorswe-sys/huddle/pull/12
+
+### What was built
+
+- **Start menu** (`internal/start`, screens 14 and 15): Plan new milestones, Run an existing milestone (only with open milestones), Resume Milestone N (only when an open control issue has `state:dev-ready`/`-working`/`pm-ready`/`pm-working`/`human-required`; the first queued one wins, else the oldest), Settings (the same text as `/settings`), Quit. ↑/↓, Enter, `q`/Esc. The picker lists open milestones (`gh api repos/{owner}/{repo}/milestones?state=open`) with issue counts (control issues not counted) and the control issue or "control issue created for you". After picking, a text field takes an optional first message for the Dev.
+- **Run an existing milestone** (`start.Prepare`): creates the control issue if missing (title `<milestone> Control`, label `control`, body with `## First Dev task` / `Prompt: …` and the `<!-- huddle:control -->` marker), or writes the message into an existing one's First Dev task; then `state:dev-ready`.
+- **Plan mode** (`internal/app/plan.go`): run screen with the Companion pane open, status bar "Planning", no facts fetched. The companion's instructions now define the `<plan>` format (always included, so a plan can also be agreed during a run; it is then queued after the running milestone). `companion.Parse` extracts the block with its lines kept; `start.ParsePlan` is a line-based parser with clear errors. The plan card has Agree / Show all / Keep talking (`ui.Card.Buttons` is now a slice). Agree runs `start.Apply`, which creates milestone → issues → control issue per milestone, in order, streaming each step to Activity through `Program.Send`.
+- **Milestone queue** (`start.Queue`, `~/.huddle/queue/<owner>_<repo>.json`): `app.Run` now runs a driver on the loop goroutine: it runs the first milestone (or waits for an agreed plan), and after `state:done` removes it from the queue and starts the next one (`Queue.Next` sets `state:dev-ready`, skipping queued issues that were closed by hand). Each start sends a `MilestoneMsg`, so the status bar, facts and `/settings` switch over and Activity says "Started M · control #N · autonomy 8". With the queue empty the badge says Done and any key returns to the start menu. `/status` has a Queue row when something is queued.
+- **Flags:** `--resume`, `--run "<title>"`, `--plan` (at most one; `--plan`/`--run` not with `--plain`).
+- **gh:** `ListMilestones`, `CreateMilestone`, `CreateIssue`, `EditBody` on the client and the fake.
+- **README:** Start menu, Plan mode and Milestone queue sections; flags; startup checks 8 and 9.
+
+### How the success criteria were checked
+
+- **Screens 14 and 15 at 100 × 34:** `TestScreenGoldens` (`internal/start/testdata/14-start-menu.golden`, `15-pick-milestone.golden`, plus `15b-first-message`). I rendered `startMenu()` and `pickMilestone()` from `mockups.go` in ASCII and diffed: 15 is identical; 14 differs only in the note "talk, agree, Huddle creates them" (see deviations). Plan mode goldens were added too (`internal/app/testdata/16-plan-mode`, `16b-plan-card`, `16c-plan-show-all`).
+- **Plan parser:** `TestParsePlanOneMilestone`, `…SeveralMilestones`, `…MultiLineBody`, `…MissingFields` (11 cases, each returns an error naming the milestone or issue, and no plan); text outside the block ignored in `companion.TestParsePlan`; `TestABrokenPlanCreatesNothing` checks the error is shown in the conversation and nothing reaches GitHub.
+- **Agreeing creates exactly the plan, in order, and queues it:** `TestApplyCreatesThePlanInOrder`, `TestAgreeingAPlanCreatesAndQueuesIt` (fake GitHub call log, queue `[3 5]`, Begin called), `TestApplyStopsAtTheFirstError`.
+- **Queue starts the next milestone after `state:done` and survives a restart:** `TestQueueRunsTheNextMilestone` (fake runner: M4 done → M5 starts; Huddle stopped mid-M5; a restart resumes M5 from the queue and M6 follows, queue ends empty), `TestDriveInPlanModeWaitsForBegin`, `TestQueueNext`, `TestQueue`.
+- **Running an existing milestone without a control issue creates one; the first message is the First Dev task:** `TestPrepareCreatesAControlIssue`, `TestPrepareExistingControlIssue`, `TestStartMenuRunsAMilestone`, `TestRunFlagUsesTheExistingControlIssue`.
+- **End to end in the sandbox:** done with `bin/huddle-v3` in tmux at 100 × 34 (PM and companion Claude Code sonnet/medium, Dev Codex gpt-6.1-sol/medium). Start menu → Plan → one message deciding two milestones → plan card "2 milestones, 2 issues" → Agree. Huddle created milestones "Sandbox M7 · Greet" (issue #33, control #34) and "Sandbox M8 · Farewell" (issue #35, control #36). M7 ran 21:19–21:23 to `state:done`, M8 started by itself at 21:23 and reached `state:done` at 21:25; queue file empty; any key returned to the start menu. Nobody touched anything after Agree.
+- **Guidelines:** gofmt, `go vet ./...`, `go test ./...` pass.
+
+### Deviations from the spec
+
+- **Branch base:** branched from `v3.5-autonomy-level`, not `v3`, because PR #11 (v3.5) is open and both touch `progress.md`, `README.md`, `main.go` and the status bar. PR #12's diff includes v3.5's two commits until #11 is merged; merge #11 first and #12 shows only v3.6.
+- **Screen 14's note** says "talk, agree, Huddle creates them" instead of "the PM creates them", because section 3.5 says Huddle creates them. `mockups.go` changed to match; the PNG was not regenerated.
+- **The confirmation prompt (`Continue? [Y/n]`) is now `--plain` only.** The start menu replaces it. `--yes` still reopens a control issue closed too early, and skips the prompt with `--plain`. `--plain` stays v1: one open control issue, no menu, no queue.
+- **Several open control issues are now normal** (a queued plan). The run screen never calls `FindControlIssue`; `--plain` still needs exactly one.
+- **Companion files across a queue:** one conversation and session for the whole run screen. In plan mode they are numbered 0 (`…_0.jsonl`, `…_0_companion.json`), so the next `--plan` continues the planning conversation. A restart on a queued milestone starts that milestone's own conversation.
+- **Plan steps reach Activity** through `cfg.Send` (Program.Send) from the command's goroutine, and the plan-mode wait uses a one-slot channel. Both are the minimum needed for the loop goroutine Bubble Tea already requires.
+- **Added:** `/status` Queue row only when something is queued (screen 06's golden is unchanged); help line "any key start menu" after the last milestone; the start menu's Settings page doesn't scroll (it fits at 100 × 34).
+
+### Needs you
+
+- **Merge order:** #11 (v3.5) first, then this PR.
+- **Finished milestones stay open on GitHub.** Neither Huddle nor the PM closes them, so the picker lists M7 and M8 (and older sandbox milestones) as open. Decide whether Huddle should close a milestone when its control issue reaches `state:done`, or the picker should hide milestones with a `state:done` control issue.
+- The sandbox now has milestones M7/M8, issues #33–#36 (all closed) and Greet/Farewell on `main`.

@@ -43,6 +43,8 @@ func (m Model) badge() (string, lipgloss.Color) {
 	switch {
 	case m.quitting:
 		return "Stopping", ui.Amber
+	case m.planning:
+		return "Planning", ui.Purple
 	case s.Phase == loop.PhaseWorking:
 		return m.roleTitle(s.Role) + " working", ui.Blue
 	case s.Phase == loop.PhaseUsageWait:
@@ -61,6 +63,14 @@ func (m Model) badge() (string, lipgloss.Color) {
 // infoParts are the parts of the info line below the status bar.
 func (m Model) infoParts() []string {
 	kv := func(k, v string) string { return ui.Muted.Render(k+" ") + v }
+	if m.planning {
+		// No milestone yet, so no issues, PRs or CI to show.
+		return []string{
+			kv("Milestone", ui.Plain.Render("none yet: agree a plan with the companion")),
+			kv("Usage", ui.Plain.Render(m.usage(false))),
+			kv("Elapsed", ui.Plain.Render(elapsed(m.now.Sub(m.started)))),
+		}
+	}
 	return []string{
 		kv("Issues", ui.Plain.Render(m.issuesShort())),
 		kv("PRs", ui.Plain.Render(m.prsShort())),
@@ -70,7 +80,8 @@ func (m Model) infoParts() []string {
 	}
 }
 
-// factsPending reports whether no GitHub facts have arrived yet.
+// factsPending reports whether no GitHub facts have arrived yet. In plan
+// mode none come until a milestone starts.
 func (m Model) factsPending() bool { return m.facts.FetchedAt.IsZero() }
 
 // issuesShort is "4/7 closed".
@@ -167,9 +178,14 @@ func (m Model) statusContent() string {
 		kv("Autonomy", plain(autonomyText(m.cfg.Settings.Autonomy))),
 		kv("Usage", plain(usage)),
 		kv("Elapsed", plain(elapsed(m.now.Sub(m.started))+" · started "+m.started.Format("15:04"))),
+	}
+	if q := m.queueText(); q != "" {
+		rows = append(rows, kv("Queue", plain(q)))
+	}
+	rows = append(rows,
 		"",
 		ui.Muted.Render("Answered by Huddle from GitHub and its logs. No agent was started."),
-	}
+	)
 	if m.factsErr != nil {
 		rows = append(rows, ui.Muted.Render("Last GitHub refresh failed: "+m.factsErr.Error()))
 	} else if !m.factsPending() {
@@ -195,6 +211,9 @@ func (m Model) turnText() string {
 		return fmt.Sprintf("No state label on #%d · add %s to start", m.cfg.Control.Number, gh.StateDevReady)
 	case loop.PhaseDone:
 		return fmt.Sprintf("Done · %d turns", s.Turn)
+	}
+	if m.planning {
+		return "Planning · no milestone runs yet"
 	}
 	return "Starting"
 }

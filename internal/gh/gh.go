@@ -78,6 +78,14 @@ type Client interface {
 	// LatestRun returns the latest workflow run on branch; ok is false if
 	// there is none.
 	LatestRun(ctx context.Context, repo, branch string) (run Run, ok bool, err error)
+	// ListMilestones returns repo's open milestones, oldest first.
+	ListMilestones(ctx context.Context, repo string) ([]Milestone, error)
+	// CreateMilestone creates an open milestone and returns its number.
+	CreateMilestone(ctx context.Context, repo, title, description string) (int, error)
+	// CreateIssue creates an issue and returns its number.
+	CreateIssue(ctx context.Context, repo string, is NewIssue) (int, error)
+	// EditBody replaces the body of issue number.
+	EditBody(ctx context.Context, repo string, number int, body string) error
 }
 
 // CLI implements Client by shelling out to gh.

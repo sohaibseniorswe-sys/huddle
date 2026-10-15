@@ -21,6 +21,7 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
+	"github.com/sohaibseniorswe-sys/huddle/internal/start"
 	"github.com/sohaibseniorswe-sys/huddle/internal/wizard"
 )
 
@@ -73,10 +74,13 @@ func testDeps(t *testing.T, dir string, env map[string]string, stdin string) (de
 			}
 			return "", false
 		},
-		gh: &gh.Fake{Issues: []gh.Issue{{
-			Number: 3, Title: "Sandbox Control", Milestone: "Sandbox M1",
-			Labels: []string{"control"},
-		}}},
+		gh: &gh.Fake{
+			Issues: []gh.Issue{{
+				Number: 3, Title: "Sandbox Control", Milestone: "Sandbox M1",
+				Labels: []string{"control"},
+			}},
+			Milestones: []gh.Milestone{{Number: 1, Title: "Sandbox M1", OpenIssues: 2}},
+		},
 		agents: checks.AgentCLIs{
 			LookPath: func(string) (string, error) { return "/bin/true", nil },
 			Run: func(_ context.Context, name string, _ ...string) (string, string, error) {
@@ -89,11 +93,20 @@ func testDeps(t *testing.T, dir string, env map[string]string, stdin string) (de
 		runAgents: func(string, string, agents.Team, io.Writer) loop.Agents { return noAgents{t} },
 		clock:     stopClock{},
 		// The tests never open the full-screen UI: this stand-in runs the
-		// loop with plain output instead.
-		runUI: func(ctx context.Context, _ app.Config, l *loop.Loop, _ io.Writer) int {
+		// first milestone's loop with plain output instead (plan mode has
+		// none, and returns 0).
+		runUI: func(ctx context.Context, cfg app.Config, _ io.Writer) (int, bool) {
+			if cfg.Planning {
+				return 0, false
+			}
+			l := cfg.NewLoop(cfg.First)
 			l.Report = loop.PlainReporter{Out: &stdout}
 			l.Controls = &loop.Controls{}
-			return l.Run(ctx)
+			return l.Run(ctx), false
+		},
+		// Nor the start menu: this stand-in quits, as Esc would.
+		runStart: func(context.Context, start.Facts, string) (start.Choice, error) {
+			return start.Choice{Kind: start.KindQuit}, nil
 		},
 		// Nor the wizard: this stand-in saves the settings it is given,
 		// as a human pressing Enter at every step would.
@@ -195,8 +208,9 @@ func TestStartupSummary(t *testing.T) {
 	// A dirty tree is fine: after an interrupted run it normally is.
 	os.WriteFile(filepath.Join(dir, "scratch.txt"), []byte("x"), 0o644)
 	d, stdout, stderr := testDeps(t, dir, map[string]string{}, "\n")
+	saveSettings(t, d, sandbox)
 	// No state label: the loop prints the hint and polls; stopClock ends it.
-	if code := run(context.Background(), []string{"--repo", sandbox}, d); code != loop.ExitInterrupted {
+	if code := run(context.Background(), []string{"--repo", sandbox, "--plain"}, d); code != loop.ExitInterrupted {
 		t.Fatalf("exit %d, stderr: %s", code, stderr.String())
 	}
 	out := stdout.String()
@@ -220,7 +234,8 @@ func TestStartupSummary(t *testing.T) {
 func TestStartupDeclined(t *testing.T) {
 	dir := gitRepo(t, "https://github.com/"+sandbox)
 	d, stdout, _ := testDeps(t, dir, nil, "n\n")
-	if code := run(context.Background(), []string{"--repo", sandbox}, d); code != 1 {
+	saveSettings(t, d, sandbox)
+	if code := run(context.Background(), []string{"--repo", sandbox, "--plain"}, d); code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
 	if !strings.Contains(stdout.String(), "aborted") {
@@ -228,7 +243,7 @@ func TestStartupDeclined(t *testing.T) {
 	}
 }
 
-func TestStartupYesOnceRunsOneTurn(t *testing.T) {
+func TestStartupResumeOnceRunsOneTurn(t *testing.T) {
 	dir := gitRepo(t, "https://github.com/"+sandbox)
 	d, stdout, stderr := testDeps(t, dir, nil, "")
 	fake := d.gh.(*gh.Fake)
@@ -239,11 +254,11 @@ func TestStartupYesOnceRunsOneTurn(t *testing.T) {
 		gotDir, gotHome = dir, home
 		return agent
 	}
-	if code := run(context.Background(), []string{"--repo", sandbox, "--yes", "--once"}, d); code != 0 {
+	if code := run(context.Background(), []string{"--repo", sandbox, "--resume", "--once"}, d); code != 0 {
 		t.Fatalf("exit %d, stderr: %s", code, stderr.String())
 	}
 	if strings.Contains(stdout.String(), "Continue?") {
-		t.Error("--yes still prompted")
+		t.Error("--resume prompted")
 	}
 	if len(agent.runs) != 1 || agent.runs[0] != session.Dev {
 		t.Errorf("runs = %v, want one Dev turn", agent.runs)
@@ -312,20 +327,25 @@ func TestRunScreenOrPlain(t *testing.T) {
 		args       []string
 		wantScreen bool
 	}{
-		{[]string{"--repo", sandbox, "--yes"}, true},
+		{[]string{"--repo", sandbox, "--resume"}, true},
 		{[]string{"--repo", sandbox, "--yes", "--plain"}, false},
 	} {
 		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
 			dir := gitRepo(t, "https://github.com/"+sandbox)
 			d, stdout, _ := testDeps(t, dir, nil, "")
 			saveSettings(t, d, sandbox)
+			if tt.wantScreen {
+				fake := d.gh.(*gh.Fake)
+				fake.Issues[0].Labels = append(fake.Issues[0].Labels, gh.StateDevReady)
+			}
 			var stream io.Writer = &bytes.Buffer{} // anything but nil
 			d.runAgents = func(_, _ string, _ agents.Team, s io.Writer) loop.Agents { stream = s; return noAgents{t} }
 			var cfg app.Config
 			screen := false
-			d.runUI = func(_ context.Context, c app.Config, _ *loop.Loop, _ io.Writer) int {
+			d.runUI = func(_ context.Context, c app.Config, _ io.Writer) (int, bool) {
 				screen, cfg = true, c
-				return 0
+				c.NewLoop(c.First) // the loop's agents are made as the screen would
+				return 0, false
 			}
 			run(context.Background(), tt.args, d)
 			if screen != tt.wantScreen {
@@ -435,7 +455,7 @@ func TestFirstRunOpensTheWizardThenSkipsIt(t *testing.T) {
 		return save(ctx, wd, c)
 	}
 	args := []string{"--repo", sandbox, "--yes", "--plain"}
-	if code := run(context.Background(), []string{"--repo", sandbox, "--yes"}, d); code != loop.ExitInterrupted {
+	if code := run(context.Background(), []string{"--repo", sandbox, "--plan"}, d); code != 0 {
 		t.Fatalf("first run: exit %d, stderr: %s", code, stderr.String())
 	}
 	if calls != 1 || !strings.Contains(stdout.String(), "✔ settings saved to ~/.huddle/projects/sohaibseniorswe-sys_huddle-sandbox.yaml") {
@@ -516,9 +536,10 @@ func TestStartupClosedControlIssueWithWorkOpen(t *testing.T) {
 		wantCode   int
 		wantReopen bool
 	}{
-		{"reopen and continue", []string{"--repo", sandbox}, "1\n\n", 0, true},
-		{"leave it and exit", []string{"--repo", sandbox}, "2\n", 0, false},
-		{"--yes reopens", []string{"--repo", sandbox, "--yes"}, "", 0, true},
+		{"reopen and continue", []string{"--repo", sandbox, "--resume"}, "1\n", 0, true},
+		{"leave it and exit", []string{"--repo", sandbox, "--resume"}, "2\n", 0, false},
+		{"--yes reopens", []string{"--repo", sandbox, "--yes", "--resume"}, "", 0, true},
+		{"plain: reopen and confirm", []string{"--repo", sandbox, "--plain"}, "1\n\n", 0, true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			dir := gitRepo(t, "https://github.com/"+sandbox)
@@ -558,7 +579,7 @@ func TestStartupClosedControlIssueNothingOpen(t *testing.T) {
 	fake := d.gh.(*gh.Fake)
 	fake.Issues[0].Closed = true
 	fake.Milestone = []gh.IssueState{{Number: 1, Closed: true}}
-	if code := run(context.Background(), []string{"--repo", sandbox, "--yes"}, d); code != 1 {
+	if code := run(context.Background(), []string{"--repo", sandbox, "--yes", "--plain"}, d); code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
 	if !strings.Contains(stderr.String(), "no open issue labelled") || len(fake.Reopened) != 0 {
@@ -590,11 +611,11 @@ func TestAutonomyFlag(t *testing.T) {
 			}
 			d.runAgents = func(_, _ string, _ agents.Team, _ io.Writer) loop.Agents { return noAgents{t} }
 			var loopLevel, screenLevel int
-			d.runUI = func(_ context.Context, cfg app.Config, l *loop.Loop, _ io.Writer) int {
-				loopLevel, screenLevel = l.Autonomy, cfg.Settings.Autonomy
-				return 0
+			d.runUI = func(_ context.Context, cfg app.Config, _ io.Writer) (int, bool) {
+				loopLevel, screenLevel = cfg.NewLoop(cfg.First).Autonomy, cfg.Settings.Autonomy
+				return 0, false
 			}
-			args := append([]string{"--repo", sandbox, "--yes"}, tt.args...)
+			args := append([]string{"--repo", sandbox, "--plan"}, tt.args...)
 			if code := run(context.Background(), args, d); code != 0 {
 				t.Fatalf("exit %d, stderr: %s", code, stderr.String())
 			}
@@ -628,5 +649,127 @@ func TestAutonomyFlagOutOfRange(t *testing.T) {
 	run(context.Background(), []string{"--autonomy", "11"}, d)
 	if want := "huddle: --autonomy: 11 is outside 0–10"; !strings.Contains(stderr.String(), want) {
 		t.Errorf("stderr = %q, want %q", stderr.String(), want)
+	}
+}
+
+// TestStartMenuRunsAMilestone picks a milestone without a control issue in
+// the start menu, with a first message: Huddle creates the control issue
+// with that message as the First Dev task, labels it state:dev-ready and
+// opens the run screen on it.
+func TestStartMenuRunsAMilestone(t *testing.T) {
+	dir := gitRepo(t, "https://github.com/"+sandbox)
+	d, _, stderr := testDeps(t, dir, nil, "")
+	saveSettings(t, d, sandbox)
+	fake := d.gh.(*gh.Fake)
+	fake.Issues = []gh.Issue{{Number: 7, Title: "Export", Milestone: "M2"}}
+	fake.Milestones = []gh.Milestone{{Number: 2, Title: "M2", OpenIssues: 1}}
+	var facts start.Facts
+	d.runStart = func(_ context.Context, f start.Facts, settings string) (start.Choice, error) {
+		facts = f
+		if !strings.Contains(settings, "none yet") {
+			t.Errorf("settings page = %q", settings)
+		}
+		return start.Choice{Kind: start.KindRun, Milestone: f.Milestones[0], Message: "Start with #7."}, nil
+	}
+	var cfg app.Config
+	d.runUI = func(_ context.Context, c app.Config, _ io.Writer) (int, bool) {
+		cfg = c
+		return 0, false
+	}
+	if code := run(context.Background(), []string{"--repo", sandbox}, d); code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr.String())
+	}
+	if len(facts.Milestones) != 1 || facts.Milestones[0].Control != 0 || facts.Resume != nil {
+		t.Errorf("start menu facts = %+v", facts)
+	}
+	control := fake.Issues[len(fake.Issues)-1]
+	if control.Number != 8 || control.Title != "M2 Control" || !strings.Contains(control.Body, "Prompt: Start with #7.") {
+		t.Fatalf("control issue = %+v", control)
+	}
+	if got := checks.States(control); len(got) != 1 || got[0] != "dev-ready" {
+		t.Errorf("states = %v", got)
+	}
+	if cfg.First.Number != 8 || cfg.Milestone != "M2" || cfg.Control.Number != 8 || cfg.Planning {
+		t.Errorf("run screen config: first %+v, milestone %q, control #%d", cfg.First, cfg.Milestone, cfg.Control.Number)
+	}
+}
+
+// TestStartMenuComesBack: when the run screen reports that every
+// milestone is done (startMenu), the start menu opens again.
+func TestStartMenuComesBack(t *testing.T) {
+	dir := gitRepo(t, "https://github.com/"+sandbox)
+	d, _, _ := testDeps(t, dir, nil, "")
+	saveSettings(t, d, sandbox)
+	menus, screens := 0, 0
+	d.runStart = func(context.Context, start.Facts, string) (start.Choice, error) {
+		menus++
+		if menus == 1 {
+			return start.Choice{Kind: start.KindPlan}, nil
+		}
+		return start.Choice{Kind: start.KindQuit}, nil
+	}
+	d.runUI = func(_ context.Context, c app.Config, _ io.Writer) (int, bool) {
+		screens++
+		if !c.Planning {
+			t.Error("not in plan mode")
+		}
+		return 0, true
+	}
+	if code := run(context.Background(), []string{"--repo", sandbox}, d); code != 0 {
+		t.Fatalf("exit %d", code)
+	}
+	if menus != 2 || screens != 1 {
+		t.Errorf("start menu shown %d times, run screen %d; want 2 and 1", menus, screens)
+	}
+}
+
+func TestStartFlags(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		args     []string
+		wantCode int
+		wantErr  string
+	}{
+		{"two modes", []string{"--resume", "--plan"}, 2, "only one of --resume, --run and --plan"},
+		{"plan needs the screen", []string{"--plan", "--plain"}, 2, "need the run screen"},
+		{"nothing to resume", []string{"--resume"}, 1, "--resume: no open control issue"},
+		{"unknown milestone", []string{"--run", "M9"}, 1, `--run: ` + sandbox + ` has no open milestone titled "M9"`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := gitRepo(t, "https://github.com/"+sandbox)
+			d, _, stderr := testDeps(t, dir, nil, "")
+			saveSettings(t, d, sandbox)
+			d.runUI = func(context.Context, app.Config, io.Writer) (int, bool) {
+				t.Error("the run screen opened")
+				return 0, false
+			}
+			if code := run(context.Background(), append([]string{"--repo", sandbox}, tt.args...), d); code != tt.wantCode {
+				t.Fatalf("exit %d, want %d; stderr %s", code, tt.wantCode, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tt.wantErr) {
+				t.Errorf("stderr = %q, want %q", stderr.String(), tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestRunFlagUsesTheExistingControlIssue: --run on a milestone that has a
+// control issue labels it state:dev-ready, keeps its body, and runs it.
+func TestRunFlagUsesTheExistingControlIssue(t *testing.T) {
+	dir := gitRepo(t, "https://github.com/"+sandbox)
+	d, _, stderr := testDeps(t, dir, nil, "")
+	saveSettings(t, d, sandbox)
+	fake := d.gh.(*gh.Fake)
+	fake.Issues[0].Body = "hand-written"
+	agent := &fakeAgent{gh: fake, label: gh.StateDone}
+	d.runAgents = func(string, string, agents.Team, io.Writer) loop.Agents { return agent }
+	if code := run(context.Background(), []string{"--repo", sandbox, "--run", "Sandbox M1"}, d); code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr.String())
+	}
+	if len(agent.runs) != 1 || agent.runs[0] != session.Dev {
+		t.Errorf("runs = %v, want the Dev", agent.runs)
+	}
+	if fake.Issues[0].Body != "hand-written" || len(fake.Issues) != 1 {
+		t.Errorf("issues = %+v", fake.Issues)
 	}
 }

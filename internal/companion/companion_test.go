@@ -179,3 +179,17 @@ func TestAskOnCodex(t *testing.T) {
 		t.Errorf("the second message must resume cx-1: %v", args)
 	}
 }
+
+func TestInstructionsInPlanMode(t *testing.T) {
+	running, planning := Instructions("Milestone 3"), Instructions("")
+	if !strings.Contains(running, `work on milestone "Milestone 3"`) {
+		t.Errorf("running instructions do not name the milestone:\n%s", running)
+	}
+	if strings.Contains(planning, "{{milestone}}") || strings.Contains(planning, `milestone ""`) ||
+		!strings.Contains(planning, "no milestone is running yet") {
+		t.Errorf("planning instructions:\n%s", planning)
+	}
+	if !strings.Contains(planning, "<plan>") || !strings.Contains(running, "<plan>") {
+		t.Error("the plan format is missing")
+	}
+}

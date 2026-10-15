@@ -581,7 +581,7 @@ func startFrame(title string, opts []string, notes []string, sel int, foot strin
 func startMenu() string {
 	return startFrame("What do you want to do?",
 		[]string{"Plan new milestones with the companion", "Run an existing milestone", "Resume Milestone 3", "Settings", "Quit"},
-		[]string{"talk, agree, the PM creates them", "pick one of 2 open milestones", "control #58 · Dev working when stopped", "read-only", ""},
+		[]string{"talk, agree, Huddle creates them", "pick one of 2 open milestones", "control #58 · Dev working when stopped", "read-only", ""},
 		0, "Planned milestones run one after another, each with its own control issue.") + "\n" +
 		help("↑/↓", "choose", "enter", "open", "q", "quit")
 }

@@ -12,6 +12,9 @@ type Reply struct {
 	Decision string // the proposed decision; "" if none
 	Reason   string // the decision's one-line reason; "" if none was given
 	Action   string // a proposed Huddle action: "pause", "resume", "status" or "log HH:MM"; "" if none
+	// Plan is the text inside a <plan> block, line breaks kept, for
+	// start.ParsePlan; "" if none.
+	Plan string
 }
 
 // The tags Parse looks for. (?s) lets "." match line breaks too, so a tag
@@ -20,6 +23,7 @@ var (
 	decisionRe = regexp.MustCompile(`(?s)<decision>(.*?)</decision>`)
 	reasonRe   = regexp.MustCompile(`(?s)<reason>(.*?)</reason>`)
 	actionRe   = regexp.MustCompile(`(?s)<action>(.*?)</action>`)
+	planRe     = regexp.MustCompile(`(?s)<plan>(.*?)</plan>`)
 	// actionNameRe is the list of actions the instructions allow.
 	actionNameRe = regexp.MustCompile(`^(pause|resume|status|log [0-2]?[0-9]:[0-5][0-9])$`)
 	// blankLinesRe matches the runs of empty lines that removed tags leave.
@@ -29,9 +33,9 @@ var (
 // Parse splits a companion reply. Tags inside code fences (``` blocks) are
 // examples, not proposals: they are left in the text and ignored. If the
 // reply has several decisions, the last one wins, and the same for reasons
-// and actions. An action that is not one of the allowed names is ignored,
-// and so is any action when the reply also has a decision: only one card
-// is shown at a time, and the decision matters more.
+// and actions and plans. An action that is not one of the allowed names is
+// ignored. Only one card is shown at a time, so a plan beats a decision
+// and an action, and a decision beats an action.
 func Parse(reply string) Reply {
 	var r Reply
 	var text strings.Builder
@@ -49,12 +53,19 @@ func Parse(reply string) Reply {
 		if s, ok := last(actionRe, part); ok {
 			r.Action = s
 		}
-		for _, re := range []*regexp.Regexp{decisionRe, reasonRe, actionRe} {
+		if all := planRe.FindAllStringSubmatch(part, -1); len(all) > 0 {
+			// Unlike the others, a plan keeps its lines: they are its format.
+			r.Plan = strings.TrimSpace(all[len(all)-1][1])
+		}
+		for _, re := range []*regexp.Regexp{decisionRe, reasonRe, actionRe, planRe} {
 			part = re.ReplaceAllString(part, "")
 		}
 		text.WriteString(part)
 	}
-	if !actionNameRe.MatchString(r.Action) || r.Decision != "" {
+	if r.Plan != "" {
+		r.Decision = ""
+	}
+	if !actionNameRe.MatchString(r.Action) || r.Decision != "" || r.Plan != "" {
 		r.Action = ""
 	}
 	if r.Decision == "" {
