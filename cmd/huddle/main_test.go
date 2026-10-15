@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -562,5 +563,70 @@ func TestStartupClosedControlIssueNothingOpen(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "no open issue labelled") || len(fake.Reopened) != 0 {
 		t.Errorf("stderr = %q, reopened %v", stderr.String(), fake.Reopened)
+	}
+}
+
+// TestAutonomyFlag checks that --autonomy replaces the settings' level for
+// one run (the loop and the run screen get it) without changing the file.
+func TestAutonomyFlag(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"settings level", nil, 6},
+		{"flag overrides", []string{"--autonomy", "3"}, 3},
+		{"zero is a level", []string{"--autonomy=0"}, 0},
+		{"top of the dial", []string{"--autonomy", "10"}, 10},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := gitRepo(t, "https://github.com/"+sandbox)
+			d, stdout, stderr := testDeps(t, dir, nil, "")
+			home, _ := d.lookupEnv("HOME")
+			c := config.Default(sandbox)
+			c.Autonomy = 6
+			if err := config.Save(home, c); err != nil {
+				t.Fatal(err)
+			}
+			d.runAgents = func(_, _ string, _ agents.Team, _ io.Writer) loop.Agents { return noAgents{t} }
+			var loopLevel, screenLevel int
+			d.runUI = func(_ context.Context, cfg app.Config, l *loop.Loop, _ io.Writer) int {
+				loopLevel, screenLevel = l.Autonomy, cfg.Settings.Autonomy
+				return 0
+			}
+			args := append([]string{"--repo", sandbox, "--yes"}, tt.args...)
+			if code := run(context.Background(), args, d); code != 0 {
+				t.Fatalf("exit %d, stderr: %s", code, stderr.String())
+			}
+			if loopLevel != tt.want || screenLevel != tt.want {
+				t.Errorf("loop autonomy %d, run screen autonomy %d, want %d", loopLevel, screenLevel, tt.want)
+			}
+			if want := fmt.Sprintf("✔ autonomy %d · %s", tt.want, config.AutonomyName(tt.want)); !strings.Contains(stdout.String(), want) {
+				t.Errorf("output lacks %q:\n%s", want, stdout.String())
+			}
+			if saved, _, _ := config.Load(home, sandbox); saved.Autonomy != 6 {
+				t.Errorf("settings file autonomy = %d, want 6 (unchanged)", saved.Autonomy)
+			}
+		})
+	}
+}
+
+func TestAutonomyFlagOutOfRange(t *testing.T) {
+	for _, bad := range []string{"11", "-1", "100", "eight"} {
+		d, stdout, stderr := testDeps(t, t.TempDir(), nil, "")
+		if code := run(context.Background(), []string{"--repo", sandbox, "--autonomy", bad}, d); code != 2 {
+			t.Errorf("--autonomy %s: exit %d, want 2", bad, code)
+		}
+		if !strings.Contains(stderr.String(), "autonomy") {
+			t.Errorf("--autonomy %s: stderr %q does not mention the flag", bad, stderr.String())
+		}
+		if stdout.Len() > 0 {
+			t.Errorf("--autonomy %s: startup ran: %q", bad, stdout.String())
+		}
+	}
+	d, _, stderr := testDeps(t, t.TempDir(), nil, "")
+	run(context.Background(), []string{"--autonomy", "11"}, d)
+	if want := "huddle: --autonomy: 11 is outside 0–10"; !strings.Contains(stderr.String(), want) {
+		t.Errorf("stderr = %q, want %q", stderr.String(), want)
 	}
 }

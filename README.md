@@ -2,7 +2,7 @@
 
 Huddle lets two AI coding agents complete a GitHub milestone from design to delivery in one go: a Dev agent and a PM agent, each played by Codex CLI or Claude Code (by default Codex is the Dev and Claude Code the PM; see [Project settings](#project-settings)). The agents talk through a control issue: they post their own comments on it and set its `state:*` label at the end of each turn. Huddle watches the label and starts whichever agent's turn it is; it adds no limits, timeouts or restrictions. The human is involved only if the PM sets `state:human-required`, or Huddle does for an account or credit error. The spec is [MVP_PLAN.md](MVP_PLAN.md).
 
-**Status:** Huddle v3 is in progress ([docs/v3](docs/v3/README.md)). v3.1, v3.2 and v3.3 are done: after the startup checks, `huddle` shows a full-screen run screen (below) with a companion agent you talk to while the Dev and PM work, and a per-project settings file says which CLI, model and effort plays each role. `huddle --plain` behaves like v1.
+**Status:** Huddle v3 is in progress ([docs/v3](docs/v3/README.md)). v3.1 to v3.5 are done: after the startup checks, `huddle` shows a full-screen run screen (below) with a companion agent you talk to while the Dev and PM work, a per-project settings file says which CLI, model and effort plays each role, and one autonomy level (0–10) tells both agents when to hand over. `huddle --plain` behaves like v1.
 
 ## Build and run
 
@@ -17,6 +17,7 @@ cd ~/projects/huddle-sandbox && huddle --repo sohaibseniorswe-sys/huddle-sandbox
 | Flag | Meaning |
 |------|---------|
 | `--repo owner/name` | Target repo. Default `sohaibseniorswe-sys/palantir`. Use the sandbox for testing. |
+| `--autonomy N` | Autonomy level for this run only, 0 (most careful) to 10 (most independent). Overrides `autonomy` in the settings file without changing the file. Values outside 0–10 are rejected (exit status 2). See [Autonomy](#autonomy). |
 | `--yes` | Skip the `Continue? [Y/n]` prompt. |
 | `--once` | Run a single agent turn (including its resume fallback, usage-limit wait or escalation, and anti-stall), then stop the loop. With `--plain` Huddle then exits; on the run screen it stays open until you quit. |
 | `--plain` | No run screen: print Huddle's lines and the agents' raw output to stdout, exactly as v1 did. For tests, CI and piping into a file. |
@@ -99,14 +100,30 @@ agents:
     cli: claude
     model: sonnet
     effort: medium
-autonomy: 8             # used from v3.5
+autonomy: 8             # 0 (most careful) to 10 (most independent)
 ```
 
 - **Defaults:** Dev = Codex, PM = Claude Code, companion same as the PM, each CLI's own model and effort, autonomy 8.
 - **Checked at startup:** each `cli` is `codex` or `claude`; each `effort` is one of its CLI's (Codex: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`; Claude Code: `low`, `medium`, `high`, `xhigh`, `max`); autonomy is 0–10. A key Huddle does not know (a typo) is an error too. Huddle stops with a message naming the key.
 - **Models** are passed as written. Neither CLI can list its models, so any name is accepted here; `agents.Validate` (used by the v3.4 wizard) checks a model and effort with a tiny test run. Known names are kept in one place, `internal/agents/agents.go`: Codex `gpt-6.1-sol`; Claude Code `opus` (Opus 5.5), `sonnet` (Sonnet 5.5), `haiku` (Haiku 5.5), `fable` (Fable 5.1). Claude Code's aliases always mean the newest model of their family.
-- **Roles, not tools.** Whichever CLI plays a role gets the same prompts, labels, sessions, usage-limit handling and escalation. The operating principles say "YOUR ROLE: DEV" or "YOUR ROLE: PM" and then "You are the Dev agent (Claude Code)". Usage limits are read with the messages of the CLI that plays the role.
+- **Roles, not tools.** Whichever CLI plays a role gets the same prompts, labels, sessions, usage-limit handling and escalation. The operating principles say "YOUR ROLE: DEV" or "YOUR ROLE: PM" and then "You are the Dev agent (Claude Code), working at autonomy level 8". Usage limits are read with the messages of the CLI that plays the role.
+- **Autonomy** is one dial for both agents (see [Autonomy](#autonomy)); `--autonomy N` overrides it for one run.
 - Huddle rewrites the file with a fixed comment header; comments you add by hand are not kept when it saves.
+
+## Autonomy
+
+One autonomy level, from 0 (most careful) to 10 (most independent), tells both agents when to hand over. It is `autonomy` in the settings file (default 8, chosen in the wizard's step 7), and `--autonomy N` overrides it for one run. The run screen shows it in the status bar ("autonomy 8"), in `/status` and in `/settings`, and the companion's context block includes it so the companion can explain why an agent stopped or carried on.
+
+Every launch prompt carries the same AUTONOMY section, right after HOW HUDDLE WORKS, with the level filled in. Each agent applies its own role's row:
+
+| Level | Dev hands over to the PM | PM comes to the human |
+| --- | --- | --- |
+| 0–2 Supervised | after every issue, and before every push or merge | for every product decision and before each merge |
+| 3–5 Checkpoints | after every issue; small technical choices are its own | for product decisions; approves merges itself |
+| 6–8 Autonomous | only for conflicts between issues, requirement changes or real blockers | only when the world is on fire: credentials, money, access, or no way forward |
+| 9–10 Full autonomy | only when completely blocked or done; settles even conflicts and records why | only for credentials or money |
+
+The role sections no longer have handover rules of their own, so nothing contradicts the table at any level. The end-of-milestone steps (the PM's final report, `state:done`, `state:human-required` when only human-only issues remain) stay.
 
 ## Startup checks
 
@@ -117,7 +134,7 @@ Huddle runs these checks in order and stops at the first failure, printing the r
 3. `AGENTS.md` and `CLAUDE.md` exist. `Session.md` is created empty if it is missing.
 4. `gh` is logged in and can see the target repo.
 5. All Huddle labels exist on the target repo (missing ones are created; existing ones are left alone).
-6. The project's settings file is valid (without one, the setup wizard runs first). Huddle prints which CLI, model and effort plays each role.
+6. The project's settings file is valid (without one, the setup wizard runs first). Huddle prints which CLI, model and effort plays each role, and the autonomy level (`--autonomy` replaces the file's level for this run).
 7. The CLIs that play a role (only those) are on `PATH` and logged in with a subscription. Their versions are recorded for `/settings`.
 8. Exactly one open issue is a control issue (labelled `control`, or with `<!-- huddle:control -->` in its body), and it has a milestone. If there is none but a control issue was closed while its milestone still has open issues, Huddle prints `Control issue #N is closed but K issues are still open` and asks: 1) Reopen and continue, or 2) Leave it and exit (`--yes` reopens).
 9. Huddle prints the summary and asks `Continue? [Y/n]` (skipped with `--yes`).
@@ -362,7 +379,7 @@ For example `You've hit your weekly limit · resets Oct 15, 10am (Europe/London)
 
 - `internal/session` stores `{"dev": "...", "pm": "..."}` in `~/.huddle/sessions/<owner>_<repo>_<control-issue>.json`. A missing or unreadable file means no sessions; writes go through a temporary file and a rename.
 - `internal/gh` reads and sets the control issue's `state:*` label, removes a label, reads the latest comment and posts comments (bodies go to `gh issue comment --body-file -` on stdin). Reading the state normalises it: if several state labels are present, the first of `human-required`, `done`, `pm-ready`, `dev-ready`, `pm-working`, `dev-working` wins and every other `state:*` label is removed, so a label an agent set always beats a leftover `*-working` label. Setting a state removes every other `state:*` label in the same `gh issue edit`.
-- `internal/prompts` embeds `shared.md`, `dev.md` and `pm.md` (the operating principles from MVP_PLAN.md section 9, checked byte for byte by a test) and renders the launch prompt, filling in the milestone, the control issue and the CLI that plays the role.
+- `internal/prompts` embeds `shared.md`, `dev.md` and `pm.md` (the operating principles from MVP_PLAN.md section 9, checked byte for byte by a test) and renders the launch prompt, filling in the milestone, the control issue, the CLI that plays the role and the autonomy level. Golden files cover levels 0, 3, 8 and 10 for both roles and both CLIs.
 
 ## macOS
 

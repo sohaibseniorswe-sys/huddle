@@ -36,6 +36,10 @@ type Context struct {
 	State string
 	// Milestone is its progress: "Milestone 3, 4 of 7 issues closed (...)".
 	Milestone string
+	// Autonomy is the run's autonomy level (0–10). Both agents' prompts
+	// tell them to hand over by the AUTONOMY table at this level, so the
+	// companion needs it to explain when and why they stop.
+	Autonomy int
 	// Events are the newest Activity events, oldest first, one line each:
 	// "22:52 codex $ gh pr create → PR #73".
 	Events []string
@@ -61,6 +65,7 @@ func (c Context) String() string {
 	line("Screen", orNone(c.Screen))
 	line("State", orNone(c.State))
 	line("Milestone", orNone(c.Milestone))
+	line("Autonomy", autonomyLine(c.Autonomy))
 
 	events := c.Events[max(len(c.Events)-MaxEvents, 0):]
 	fmt.Fprintf(&b, "Last %d activity events:", len(events))
@@ -88,6 +93,23 @@ func (c Context) String() string {
 	writeBlock(&b, tailLines(c.AgentOutput, AgentOutputLines))
 	line("Pending decision card", orNone(c.PendingCard))
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// autonomyLine says what level means for both agents, in the words of the
+// AUTONOMY section of their operating principles (internal/prompts).
+func autonomyLine(level int) string {
+	var dev, pm string
+	switch {
+	case level <= 2:
+		dev, pm = "after every issue and before every push or merge", "for every product decision and before each merge"
+	case level <= 5:
+		dev, pm = "after every issue", "for product decisions"
+	case level <= 8:
+		dev, pm = "only for conflicts between issues, requirement changes or real blockers", "only when the world is on fire: credentials, money, access, or no way forward"
+	default:
+		dev, pm = "only when completely blocked or done (settles conflicts itself)", "only for credentials or money"
+	}
+	return fmt.Sprintf("level %d of 0-10. The Dev hands over to the PM %s; the PM comes to the human %s.", level, dev, pm)
 }
 
 // writeBlock writes text indented on the lines after a heading, or " none".

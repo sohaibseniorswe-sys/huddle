@@ -83,6 +83,7 @@ type Loop struct {
 	Milestone string
 	Agents    Agents
 	Team      agents.Team // what plays the Dev and the PM, for names and usage limits
+	Autonomy  int         // the autonomy level (0–10) written into every launch prompt
 	Sessions  Sessions
 	Clock     Clock
 	Report    Reporter  // told about every step and status change
@@ -253,7 +254,7 @@ func (l *Loop) turnFor(ctx context.Context, role session.Role) error {
 	if err := l.retry(ctx, "set "+working, func() error { return l.Control.SetState(ctx, working) }); err != nil {
 		return err
 	}
-	prompt, err := prompts.Launch(prompts.Role(role), l.Team.For(role).CLI.Name, l.Milestone, l.Control.Number)
+	prompt, err := prompts.Launch(prompts.Role(role), l.Team.For(role).CLI.Name, l.Milestone, l.Control.Number, l.Autonomy)
 	if err != nil {
 		return err // only for an unknown role
 	}

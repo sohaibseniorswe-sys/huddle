@@ -26,11 +26,13 @@ const (
 )
 
 // Launch returns the launch prompt for role: the shared section, the role's
-// section, then the turn line. agent names the CLI playing the role
-// ("Codex" or "Claude Code"), so the agent knows which role it has whatever
-// tool it is. Placeholders are filled with plain string replacement, so
-// nothing else in the text is interpreted.
-func Launch(role Role, agent, milestone string, controlIssue int) (string, error) {
+// section, then the turn line. cli names the CLI playing the role ("Codex"
+// or "Claude Code"), so the agent knows which role it has whatever tool it
+// is. level is the autonomy level (0–10): the shared AUTONOMY section's
+// table, read at that level, is the only rule for when an agent hands over.
+// Placeholders are filled with plain string replacement, so nothing else in
+// the text is interpreted.
+func Launch(role Role, cli, milestone string, controlIssue, level int) (string, error) {
 	var section string
 	switch role {
 	case Dev:
@@ -40,7 +42,12 @@ func Launch(role Role, agent, milestone string, controlIssue int) (string, error
 	default:
 		return "", fmt.Errorf("unknown role %q", role)
 	}
-	r := strings.NewReplacer("{{milestone}}", milestone, "{{control_issue}}", fmt.Sprint(controlIssue), "{{agent}}", agent)
+	r := strings.NewReplacer(
+		"{{milestone}}", milestone,
+		"{{control_issue}}", fmt.Sprint(controlIssue),
+		"{{cli}}", cli,
+		"{{level}}", fmt.Sprint(level),
+	)
 	return r.Replace(strings.TrimRight(shared, "\n")) + "\n\n" +
 		r.Replace(strings.TrimRight(section, "\n")) + "\n\n" +
 		fmt.Sprintf("It's your turn. Read control issue #%d and continue.\n", controlIssue), nil

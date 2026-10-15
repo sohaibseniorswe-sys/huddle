@@ -159,3 +159,41 @@ One entry per issue: when it was built, what was built, where it differs from th
 
 - Nothing blocking.
 - The palantir settings use the CLI defaults except the Dev's effort (`medium`). Run `huddle setup` in `~/projects/palantir` to pick models through the wizard.
+
+## v3.5 Autonomy level
+
+- **Started:** 2026-10-14 20:55 EDT
+- **Finished:** 2026-10-14 20:59 EDT (PR opened, CI started)
+- **Branch / PR:** `v3.5-autonomy-level` → `v3`, https://github.com/sohaibseniorswe-sys/huddle/pull/11
+
+### What was built
+
+- **Operating principles** (`internal/prompts`, MVP_PLAN.md section 9, kept identical by `TestEmbeddedMatchesPlan`):
+  - `shared.md` now has the spec's AUTONOMY section, word for word, right after HOW HUDDLE WORKS, with `{{level}}` filled in.
+  - Each role section starts with "You are the Dev agent ({{cli}}), working at autonomy level {{level}}." (or the PM). The `{{agent}}` placeholder is renamed `{{cli}}` to match the spec.
+  - Handover rules removed from the role sections, so only the table decides. Dev: "Do not stop to ask for review, approval or confirmation" and "Hand over to the PM (state:pm-ready) only when …" are gone. In their place: "Note any assumption you make in the issue or PR" and "When you hand over to the PM (state:pm-ready), put all open questions and blockers in that one comment". PM: "so the human is never disturbed", "Prefer a sensible decision over a question. If a choice can be changed later, make it, record it, and move on" and "Set state:human-required at any other time only when …" are gone. Added "Record every decision you make" and "When you come to the human, set state:human-required and put the exact question in your comment". The end-of-milestone instructions (final report, `state:done`, closing the control issue, `state:human-required` when only human-only issues remain) are unchanged.
+  - `prompts.Launch(role, cli, milestone, control, level)`. `loop.Loop.Autonomy` carries the level into every launch prompt.
+- **`--autonomy N`** (main): overrides the settings' level for this run only, without changing the file. Out-of-range values exit with status 2 and `huddle: --autonomy: 11 is outside 0–10 (0 is the most careful, 10 the most independent)`. `fs.Visit` tells a given `--autonomy 0` from no flag. The startup checks print `✔ autonomy 8 · Autonomous`, plus a line naming the override when the flag is used. It is applied after the wizard, so `huddle setup --autonomy 3` still shows and saves the file's level. v1 never had `--dev-autonomy`/`--pm-autonomy` flags, so there was nothing to replace.
+- **Run screen:** status bar `palantir · Milestone 3 · control #58 · autonomy 8`; `/status` row `Autonomy  8 · Autonomous` (was "not set"); `/settings` drops "(used from v3.5)".
+- **Companion:** the context block has an `Autonomy:` line, for example "level 8 of 0-10. The Dev hands over to the PM only for conflicts between issues, requirement changes or real blockers; the PM comes to the human only when the world is on fire: …".
+- **README:** new "Autonomy" section with the table, the `--autonomy` flag, startup check 6, and the settings example.
+
+### How the success criteria were checked
+
+- **Golden tests at 0, 3, 8, 10 for both roles and both CLIs:** `TestLaunchGolden`, 16 files `internal/prompts/testdata/<role>-<cli>-<level>.golden` (they replace `dev.golden`/`pm.golden`). Also `TestAutonomySectionMatchesSpec`, which compares the embedded section with the code block in `docs/v3/issues/05-autonomy-level.md` and checks its position.
+- **Old handover rules gone:** `TestOldHandoverRulesGone` renders both roles at every golden level and checks that neither spec phrase appears (nor the three other removed sentences). It also checks that the end-of-milestone instructions are still in `pm.md`.
+- **`--autonomy` overrides the config; bad values rejected:** `TestAutonomyFlag` (the file says 6; no flag → 6; `--autonomy 3`, `--autonomy=0`, `--autonomy 10` reach both the loop and the run screen; the file still says 6) and `TestAutonomyFlagOutOfRange` (`11`, `-1`, `100`, `eight` → exit 2, nothing else runs, clear message). Checked by hand with `bin/huddle-v3 --autonomy 12` too.
+- **Loop passes the level:** `TestSwappedRoles` now checks "working at autonomy level 3" in both prompts.
+- **Calibration:** not done, as you asked (see below).
+- No sandbox run: every criterion except calibration can be checked by tests.
+
+### Deviations from the spec
+
+- **Calibration skipped** (your instruction): no sandbox milestone created, no runs at levels 3, 8 and 10, no `docs/v3/autonomy-calibration.md`. The "at level 8 the conflict goes to the PM" criterion is therefore unverified, and the PR leaves that box unticked.
+- **Wording added to the role sections** where removed sentences had carried non-handover content: "Note any assumption you make in the issue or PR", "When you hand over …, put all open questions and blockers in that one comment", "Record every decision you make", "When you come to the human, set state:human-required and put the exact question in your comment". These say how to hand over, never when. "If something blocks one issue, leave a note on it and carry on with the rest" stays in the Dev section, because the level-8 expectation ("Dev finishes the rest, hands the conflict to the PM") relies on it.
+- **`{{agent}}` → `{{cli}}`**, to use the spec's placeholder name.
+- The mockup's "Started Milestone 3 · control #58 · autonomy 8" Activity line is not added. The spec does not ask for it, and the loop has no start event yet.
+
+### Needs you
+
+- **Calibration runs** at levels 3, 8 and 10 on the sandbox, when you want them. Until then, nothing shows that the agents follow their rows.

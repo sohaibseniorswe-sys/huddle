@@ -51,7 +51,7 @@ type Config struct {
 	Repo     string `yaml:"repo"` // "owner/name"
 	Dir      string `yaml:"dir"`  // the local clone; may be empty
 	Agents   Agents `yaml:"agents"`
-	Autonomy int    `yaml:"autonomy"` // 0–10; used from v3.5
+	Autonomy int    `yaml:"autonomy"` // 0–10; --autonomy overrides it for one run
 }
 
 // Agents says what plays each role.
