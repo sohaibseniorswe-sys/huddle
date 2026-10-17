@@ -11,9 +11,6 @@ import (
 	"strings"
 )
 
-// DefaultRepo is the target repo when --repo is not given.
-const DefaultRepo = "sohaibseniorswe-sys/palantir"
-
 // SessionFile is the shared, gitignored scratchpad both agents read and update.
 const SessionFile = "Session.md"
 

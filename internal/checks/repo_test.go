@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+const remoteFixtureRepo = "sohaibseniorswe-sys/palantir"
+
 func TestValidateRepo(t *testing.T) {
 	valid := []string{
 		"sohaibseniorswe-sys/palantir",
@@ -91,15 +93,15 @@ func TestMatchRemote(t *testing.T) {
 		target string
 		ok     bool
 	}{
-		{"default target https", "https://github.com/sohaibseniorswe-sys/palantir.git", DefaultRepo, true},
-		{"default target ssh", "git@github.com:sohaibseniorswe-sys/palantir.git", DefaultRepo, true},
-		{"default target case-insensitive", "https://github.com/SohaibSeniorSWE-sys/Palantir", DefaultRepo, true},
-		{"default target, sandbox clone", "https://github.com/sohaibseniorswe-sys/huddle-sandbox.git", DefaultRepo, false},
-		{"override target https", "https://github.com/sohaibseniorswe-sys/huddle-sandbox.git", sandbox, true},
-		{"override target ssh", "ssh://git@github.com/sohaibseniorswe-sys/huddle-sandbox", sandbox, true},
-		{"override target, palantir clone", "git@github.com:sohaibseniorswe-sys/palantir.git", sandbox, false},
-		{"prefix is not a match", "https://github.com/sohaibseniorswe-sys/palantir-old.git", DefaultRepo, false},
-		{"unparseable remote", "not a url", DefaultRepo, false},
+		{"ordinary target https", "https://github.com/sohaibseniorswe-sys/palantir.git", remoteFixtureRepo, true},
+		{"ordinary target ssh", "git@github.com:sohaibseniorswe-sys/palantir.git", remoteFixtureRepo, true},
+		{"ordinary target case-insensitive", "https://github.com/SohaibSeniorSWE-sys/Palantir", remoteFixtureRepo, true},
+		{"ordinary target, sandbox clone", "https://github.com/sohaibseniorswe-sys/huddle-sandbox.git", remoteFixtureRepo, false},
+		{"other target https", "https://github.com/sohaibseniorswe-sys/huddle-sandbox.git", sandbox, true},
+		{"other target ssh", "ssh://git@github.com/sohaibseniorswe-sys/huddle-sandbox", sandbox, true},
+		{"other target, palantir clone", "git@github.com:sohaibseniorswe-sys/palantir.git", sandbox, false},
+		{"prefix is not a match", "https://github.com/sohaibseniorswe-sys/palantir-old.git", remoteFixtureRepo, false},
+		{"unparseable remote", "not a url", remoteFixtureRepo, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

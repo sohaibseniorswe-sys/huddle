@@ -31,3 +31,19 @@ One entry per issue: start/finish time, what was built, deviations from the spec
   previously persisted start; later Dev handoffs stay building. An absent known
   milestone in GitHub's complete open-milestone list means it is closed.
 - Deviations: none. Human needed: none.
+
+## v4.03 — #15 registry startup and routing
+
+- Start: 2026-10-16 20:31 EDT. Finish: 2026-10-16 20:33 EDT.
+- Built: local registry picker, cached status listing, `--list`, `--project`,
+  `--new`, phase routing and completed-project plan-next/archive choice. A new
+  unnamed identity opens planning without a repository or checkout. Planning
+  memory keys use internal IDs so unnamed projects do not share conversations.
+- Before: an omitted `--repo` selected a hardcoded repository. After: no target
+  opens the registry picker; repo-backed projects all use the same generic path.
+  No project-specific references remain in executable internal/cmd code.
+- Evidence: listing/route/picker tests, new-project reopen test without GitHub or
+  checkout, existing v3 direct-entry tests; full suite, vet and v4 binary build.
+- Technical choice: `--repo` retains the explicit generic v3 entry; normal v4
+  entry is registry-first. Planning/publish internals follow in #19/#20.
+- Deviations: none. Human needed: none.

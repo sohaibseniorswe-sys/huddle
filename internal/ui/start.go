@@ -14,7 +14,7 @@ import (
 const StartOptionWidth = 42
 
 // StartBar draws the start menu's first row: the HUDDLE badge and where
-// Huddle runs ("palantir · ~/projects/palantir").
+// Huddle runs ("example · ~/projects/example").
 func StartBar(width int, where string) string {
 	head := lipgloss.NewStyle().Bold(true).Foreground(White).Background(Purple).Padding(0, 1).Render("HUDDLE")
 	room := width - lipgloss.Width(head)

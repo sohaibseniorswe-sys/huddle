@@ -431,3 +431,11 @@ statuses are `PLANNED`, `ACTIVE`, or `DONE`. Opening a project refreshes runtime
 state from GitHub. A first `state:dev-ready` control is published; later ready
 handoffs belong to the active build. A done control or closed milestone derives
 `DONE`. Planning-only identities need no repository or directory.
+
+With no target flags, v4 starts with the managed-project picker. It lists cached
+status from the registry without GitHub calls or next-step computation. Open a
+project to refresh its phase and resume planning, offer a published milestone,
+reconcile a build, or plan next/archive a completed project. `--list` prints the
+same local listing, `--project <id>` opens an entry, and `--new` creates an unnamed
+planning identity. `--repo owner/name` remains the generic direct entry for v3
+workflows; there is no built-in project or repository default.
