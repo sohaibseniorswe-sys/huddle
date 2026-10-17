@@ -1,0 +1,14 @@
+{
+  "title": "Sandbox lifecycle fixture",
+  "slug": "sandbox-lifecycle-fixture",
+  "readme": "# Sandbox lifecycle fixture\n\n## Objective\nProvide a durable sample milestone.\n\n## Definition of Done\nThe fixture responds successfully and its behavior is verified.",
+  "issues": [
+    {
+      "id": "01-response",
+      "title": "Provide a fixture response",
+      "text": "# Fixture response\n\n## Objective\nProvide a predictable sample response.\n\n## Requirements\nReturn the word READY.\n\n## Success criteria\nThe response equals READY.\n\n## Evidence required\nA response check covering success and failure.\n\n## Dependencies\nNone.",
+      "depends_on": [],
+      "supersedes": []
+    }
+  ]
+}

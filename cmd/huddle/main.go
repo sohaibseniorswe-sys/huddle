@@ -39,6 +39,7 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/lanes"
 	"github.com/sohaibseniorswe-sys/huddle/internal/lifecycle"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
+	"github.com/sohaibseniorswe-sys/huddle/internal/planning"
 	"github.com/sohaibseniorswe-sys/huddle/internal/runner"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
 	"github.com/sohaibseniorswe-sys/huddle/internal/start"
@@ -368,7 +369,7 @@ func run(ctx context.Context, args []string, d deps) int {
 			return fail(err)
 		}
 		root := st.Data()
-		s := starter{d: d, opts: opts, projectID: selected.ID, target: "", home: home, root: root, cfg: cfg, team: team}
+		s := starter{freshSessions: true, d: d, opts: opts, projectID: selected.ID, target: "", home: home, root: root, cfg: cfg, team: team}
 		ui := s.screenConfig(gh.Issue{})
 		ui.Planning = true
 		code, _ := d.runUI(ctx, ui, d.stderr)
@@ -729,7 +730,7 @@ func (s starter) screenConfig(control gh.Issue) app.Config {
 	if laneErr != nil {
 		warning = "Could not inspect build usage: " + laneErr.Error()
 	}
-	return app.Config{
+	screen := app.Config{
 		LaneWarning: warning,
 		ProjectID:   s.projectID,
 		Repo:        s.target,
@@ -765,6 +766,17 @@ func (s starter) screenConfig(control gh.Issue) app.Config {
 		NewLoop: func(c gh.Issue) *loop.Loop { return s.newLoop(c, nil) },
 		Queue:   start.NewQueue(s.home, s.target),
 	}
+	if s.freshSessions {
+		w := planning.Workspace{Store: store.Store{Root: s.home}, ProjectID: s.projectID}
+		screen.Draft = &w
+		screen.History = w.History()
+		agent := screen.Companion.(companion.Agent)
+		agent.Instructions = planning.Instructions(control.Milestone)
+		agent.Sessions = session.NewCompanion(s.home, "planning-"+s.projectID, 0)
+		screen.Companion = agent
+		screen.Settings.CompanionSessions = agent.Sessions
+	}
+	return screen
 }
 
 // wizardDeps returns what the setup wizard needs, from d.

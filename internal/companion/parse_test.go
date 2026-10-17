@@ -106,3 +106,14 @@ func TestParsePlan(t *testing.T) {
 		t.Errorf("fenced plan used: %q", r.Plan)
 	}
 }
+
+func TestDraftPackageKeepsJSONAndSuppressesActions(t *testing.T) {
+	r := Parse("Draft ready. <draft>{\n\"title\":\"Example\"\n}</draft><action>pause</action>")
+	if r.Draft != "{\n\"title\":\"Example\"\n}" || r.Text != "Draft ready." || r.Action != "" {
+		t.Fatalf("parsed %+v", r)
+	}
+	r = Parse("```\n<draft>{}</draft>\n```")
+	if r.Draft != "" {
+		t.Fatal("treated fenced example as draft")
+	}
+}
