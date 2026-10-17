@@ -24,10 +24,11 @@ const (
 
 // Snapshot is authoritative runtime state, without any registry cache fields.
 type Snapshot struct {
-	HasControl      bool
-	MilestoneClosed bool
-	Control         gh.Issue
-	Started         bool
+	HasControl        bool
+	MilestoneClosed   bool
+	CompleteByClosure bool
+	Control           gh.Issue
+	Started           bool
 }
 
 // State is the phase and milestone status used in project listings/routing.
@@ -42,7 +43,7 @@ func Derive(s Snapshot) (State, error) {
 	if !s.HasControl {
 		return State{Planning, "PLANNED"}, nil
 	}
-	if s.MilestoneClosed || has(s.Control.Labels, gh.StateDone) {
+	if s.MilestoneClosed || s.CompleteByClosure || has(s.Control.Labels, gh.StateDone) {
 		return State{Done, "DONE"}, nil
 	}
 	for _, label := range []string{gh.StateHumanRequired, gh.StatePMReady, gh.StatePMWorking, gh.StateDevWorking} {
@@ -133,6 +134,13 @@ func Read(ctx context.Context, client gh.Client, p store.Project) (Snapshot, err
 			return Snapshot{}, err
 		}
 		snap.MilestoneClosed = !slices.ContainsFunc(milestones, func(m gh.Milestone) bool { return m.Title == control.Milestone })
+	}
+	if control.Closed && !has(control.Labels, gh.StateDone) && control.Milestone != "" {
+		work, err := (gh.Control{Client: client, Repo: p.Repo, Number: control.Number}).OpenWork(ctx, control.Milestone)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		snap.CompleteByClosure = len(work) == 0
 	}
 	comments, err := client.Comments(ctx, p.Repo, control.Number)
 	if err != nil {

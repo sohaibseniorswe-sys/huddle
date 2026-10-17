@@ -108,3 +108,26 @@ func TestReadStartEvidenceAndDrift(t *testing.T) {
 		})
 	}
 }
+
+func TestClosedControlReconciliationHonorsDoneRules(t *testing.T) {
+	for _, open := range []bool{false, true} {
+		t.Run(map[bool]string{false: "all work closed", true: "issue reopened"}[open], func(t *testing.T) {
+			f := &gh.Fake{Issues: []gh.Issue{{Number: 1, Milestone: "M", Labels: []string{"control", gh.StatePMWorking}, Closed: true}}, Milestones: []gh.Milestone{{Title: "M"}}, Milestone: []gh.IssueState{{Number: 2, Closed: !open}}}
+			snap, err := Read(context.Background(), f, store.Project{Repo: "owner/repo"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := Derive(snap)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := Done
+			if open {
+				want = Building
+			}
+			if got.Phase != want {
+				t.Fatalf("got %s want %s", got.Phase, want)
+			}
+		})
+	}
+}

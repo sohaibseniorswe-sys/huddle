@@ -47,3 +47,24 @@ One entry per issue: start/finish time, what was built, deviations from the spec
 - Technical choice: `--repo` retains the explicit generic v3 entry; normal v4
   entry is registry-first. Planning/publish internals follow in #19/#20.
 - Deviations: none. Human needed: none.
+
+## v4.04 — #16 resume and reconcile
+
+- Start: 2026-10-16 20:33 EDT. Finish: 2026-10-16 20:35 EDT.
+- Built: stale-directory detection, relocate/drop prompt and persisted repair;
+  project-scoped abandoned-draft pruning; closed-control lifecycle reconciliation
+  consistent with existing done rules. Registry directory repair overrides stale
+  settings paths while the ordinary Git remote check still validates the repo.
+- Fixture evidence: moved/deleted/non-directory path, invalid relocation, durable
+  relocation and drop; abandoned draft reopen/prune; closed controls with closed
+  vs reopened work; existing startup ask and in-loop reopen coverage.
+- REAL sandbox live-loop evidence: https://github.com/sohaibseniorswe-sys/huddle-sandbox/issues/40
+  (`HUDDLE_V4_SANDBOX=1 go test ./internal/integration -run TestSandboxResume -v`).
+  Compiled binary, temporary sandbox clone and isolated state root, real GitHub
+  control at pm-working, stale published cache; resumed the PM with fresh args
+  `-p --output-format json --dangerously-skip-permissions`, then observed Dev-ready.
+  Agent processes were scripted fixtures, not live models. Throwaway control and
+  milestone closed by cleanup. Full suite, vet and binary build pass.
+- Assumption: explicit state:done retains the pre-existing done-rule precedence;
+  closing without done requires all milestone work closed, otherwise reopening.
+- Deviations: none. Human needed: none.
