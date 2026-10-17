@@ -12,6 +12,7 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/agents"
 	"github.com/sohaibseniorswe-sys/huddle/internal/companion"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
+	"github.com/sohaibseniorswe-sys/huddle/internal/lanes"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
 	"github.com/sohaibseniorswe-sys/huddle/internal/runner"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
@@ -114,6 +115,19 @@ func (m Model) askAboutPMQuestion() (Model, tea.Cmd) {
 
 // askNext starts a companion run with everything queued.
 func (m Model) askNext() (Model, tea.Cmd) {
+	if m.cfg.Settings.Home != "" {
+		live, active, err := lanes.Active(m.cfg.Settings.Home)
+		if err == nil {
+			warning := lanes.Warning(m.cfg.Team.Companion.CLI.ID, live, active)
+			if warning != "" && warning != m.cfg.LaneWarning {
+				m = m.addEvent(m.huddleEvent(warning))
+				m.cfg.LaneWarning = warning
+			}
+		} else {
+			m = m.addEvent(m.huddleEvent("Could not inspect build usage: " + err.Error()))
+		}
+	}
+
 	message, pm := strings.Join(m.queue, "\n\n"), m.queuePM
 	m.queue, m.queuePM = nil, false
 	m.thinking = true

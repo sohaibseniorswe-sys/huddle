@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sohaibseniorswe-sys/huddle/internal/filelock"
 	"gopkg.in/yaml.v3"
 )
 
@@ -89,7 +90,20 @@ func (s Store) git(ctx context.Context, args ...string) ([]byte, error) {
 // Checkpoint commits pending store changes; identical content creates no commit.
 // Draft authors call this at conversation checkpoints rather than on every token.
 func (s Store) Checkpoint(ctx context.Context, message string) error {
-	if _, err := s.git(ctx, "add", "--", "projects", "config", "drafts"); err != nil {
+	lock, err := filelock.Wait(ctx, filepath.Join(s.Root, "store.lock"))
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	return s.checkpoint(ctx, message, true)
+}
+
+func (s Store) checkpoint(ctx context.Context, message string, drafts bool) error {
+	paths := []string{"add", "--", "projects", "config"}
+	if drafts {
+		paths = append(paths, "drafts")
+	}
+	if _, err := s.git(ctx, paths...); err != nil {
 		return err
 	}
 	// index.json is outside those directories.
@@ -186,6 +200,11 @@ func (s Store) List() ([]Project, error) {
 
 // Put persists a registry record and index, and immediately commits the change.
 func (s Store) Put(ctx context.Context, p Project) error {
+	lock, err := filelock.Wait(ctx, filepath.Join(s.Root, "store.lock"))
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 	if !validID.MatchString(p.ID) {
 		return fmt.Errorf("invalid project id %q", p.ID)
 	}
@@ -221,7 +240,7 @@ func (s Store) Put(ctx context.Context, p Project) error {
 	if err = s.Write("index.json", append(b, '\n')); err != nil {
 		return err
 	}
-	return s.Checkpoint(ctx, "Update project "+p.ID)
+	return s.checkpoint(ctx, "Update project "+p.ID, false)
 }
 
 // FindRepo resolves a repo attribute to its stable internal identity.

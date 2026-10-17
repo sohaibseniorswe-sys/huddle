@@ -455,3 +455,11 @@ posts its durable handoff and sets `state:dev-ready` for the next fresh Dev
 session. Each process reloads control history, issue specs, `Session.md`, and git
 history. Usage-limit retries within the same issue can resume that issue's
 session. Explicit legacy `--repo` entry keeps the v3 session policy.
+
+Only one build loop may run per state root, including across Huddle processes.
+The operating system releases the build lock after a crash, so recovery needs no
+manual lock-file deletion. Planning uses a separate companion lane and remains
+available while the build is running, paused, or waiting for usage. If the
+companion shares the running agent's CLI, Huddle warns about usage contention
+without blocking planning. Store commits are serialized independently; registry
+updates do not commit unfinished draft edits.

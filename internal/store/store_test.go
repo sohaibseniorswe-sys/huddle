@@ -2,9 +2,12 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
+	"sync"
 	"testing"
 )
 
@@ -112,5 +115,67 @@ func TestClonePortableStore(t *testing.T) {
 	}
 	if _, err := Open(ctx, t.TempDir(), "/nonexistent/huddle-data"); err == nil {
 		t.Fatal("clone failure hidden")
+	}
+}
+
+func TestRegistryCommitsDoNotCheckpointDrafts(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Write("drafts/plan/pending.md", []byte("still drafting")); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(ctx, Project{ID: "plan", Phase: "planning"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.git(ctx, "ls-files", "drafts")
+	if err != nil || len(out) != 0 {
+		t.Fatalf("registry commit checkpointed draft: %s %v", out, err)
+	}
+	if err := s.Checkpoint(ctx, "Agreed checkpoint"); err != nil {
+		t.Fatal(err)
+	}
+	out, err = s.git(ctx, "ls-files", "drafts")
+	if err != nil || len(out) == 0 {
+		t.Fatalf("checkpoint missed draft: %s %v", out, err)
+	}
+}
+
+func TestConcurrentRegistryCommits(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open(ctx, t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errs := make(chan error, 4)
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs <- s.Put(ctx, Project{ID: fmt.Sprintf("project-%d", i), Phase: "planning"})
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	ps, err := s.List()
+	if err != nil || len(ps) != 4 {
+		t.Fatalf("concurrent records: %+v %v", ps, err)
+	}
+	b, err := os.ReadFile(filepath.Join(s.Data(), "index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range ps {
+		if !strings.Contains(string(b), p.ID) {
+			t.Fatalf("index lost %s: %s", p.ID, b)
+		}
 	}
 }
