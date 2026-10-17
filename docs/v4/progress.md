@@ -178,3 +178,25 @@ One entry per issue: start/finish time, what was built, deviations from the spec
   on the sandbox-only/Git ownership conventions; question recorded on #21.
   Existing-repo onboarding has no dependency on that flow. Human needed: none;
   the PM can decide the #21 convention conflict at handoff.
+
+## v4.11 — #23 selectable/copyable agent output
+
+- Start: 2026-10-16 23:58 EDT. Finish: 2026-10-17 00:03 EDT.
+- Built: in-app raw-log/companion selection in content-row/cell coordinates,
+  forward/backward dragging, stationary edge autoscroll, retained selection during
+  mouse/keyboard scrolling, themed highlight, Unicode-safe plain-text copy via
+  OSC 52, Ctrl+C copy while selected, Ctrl+Y alternative and Escape clearing.
+  Mouse-wheel/activity/card behavior remains available; resize/source switches
+  clear stale coordinates. Terminal-reserved Ctrl+Shift+C behavior documented.
+- Evidence: unit tests for selection/copy/scroll/Unicode/companion/source changes.
+  Controlled PTY verification through the real renderer selected 18 rows downward
+  and 12 backward/upward, decoded both OSC 52 payloads, verified highlight color,
+  and exited cleanly after clearing. Notes: `docs/v4/evidence/11-text-selection.md`.
+  The first interactive fixture needed correct quit wiring; fixed and the final
+  controlled replay passed. The normal v4 binary was restored after the demo.
+- Validation: full Go suite, vet, canonical v4 build and diff check.
+- Trade-off: raw/companion drag selects in-app; native terminal selection remains
+  Shift-drag. Clipboard requires terminal OSC 52 support; desktop paste is not
+  available in this headless session. Selection spans the loaded log window and
+  resets when a different window/source is loaded.
+- Deviations: none. Human needed: none.

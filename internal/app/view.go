@@ -30,7 +30,7 @@ func (m Model) View() string {
 		parts = append(parts, m.cardView(l.slotRows).Render())
 	}
 	parts = append(parts, m.inputView(), m.helpLine())
-	return lipgloss.NewStyle().Width(m.width).MaxWidth(m.width).Height(m.height).MaxHeight(m.height).
+	return m.clipboardFrame + lipgloss.NewStyle().Width(m.width).MaxWidth(m.width).Height(m.height).MaxHeight(m.height).
 		Render(lipgloss.JoinVertical(lipgloss.Left, parts...))
 }
 
@@ -56,7 +56,7 @@ func (m Model) sync() Model {
 	// A list or conversation showing its newest line keeps showing it when
 	// its pane changes size or gets new lines.
 	followList := m.view == viewList && m.list.AtBottom()
-	followChat := m.chatVP.AtBottom()
+	followChat := m.chatVP.AtBottom() && m.selection.pane != selectChat
 	m.list.Width, m.list.Height = width, rows
 	m.statusVP.Width, m.statusVP.Height = width, rows
 	m.settingsVP.Width, m.settingsVP.Height = width, rows
@@ -73,8 +73,14 @@ func (m Model) sync() Model {
 	m.statusVP.SetContent(m.statusContent())
 	m.settingsVP.SetContent(m.settings)
 	m.planVP.SetContent(ui.Plain.Width(width).Render(m.planText))
-	m.log.vp.SetContent(m.log.content(width))
-	m.chatVP.SetContent(m.chatContent(width))
+	if m.selection.pane == selectLog && (m.view != viewLog || m.selection.key != m.logSelectionKey()) {
+		m.selection = textSelection{}
+	}
+	if m.selection.pane == selectChat && !m.companionOpen {
+		m.selection = textSelection{}
+	}
+	m.log.vp.SetContent(m.selection.highlight(m.log.content(width), m.logSelectionKey()))
+	m.chatVP.SetContent(m.selection.highlight(m.chatContent(width), "chat"))
 	if followList {
 		m.list.GotoBottom()
 	}
@@ -155,6 +161,8 @@ func (m Model) helpLine() string {
 	switch {
 	case m.quitting:
 		pairs = []string{"", "Stopping the agent and putting its label back…", "ctrl+c", "quit at once"}
+	case m.selection.active():
+		pairs = []string{"drag", "select/scroll", "ctrl+c", "copy", "esc", "clear selection"}
 	case m.finished:
 		pairs = []string{"any key", "start menu", "ctrl+c", "quit"}
 	case m.focus == focusMenu:

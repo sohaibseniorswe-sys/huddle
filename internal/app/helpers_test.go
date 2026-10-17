@@ -237,7 +237,7 @@ func (f *fixture) run(cmd tea.Cmd) {
 		for _, c := range msg {
 			f.run(c)
 		}
-	case tickMsg, spinner.TickMsg:
+	case tickMsg, spinner.TickMsg, selectionTickMsg, clipboardClearMsg:
 		// A timer: not run in tests.
 	default:
 		f.run(f.send(msg)) // and whatever that message starts in turn

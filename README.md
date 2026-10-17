@@ -489,3 +489,18 @@ planning make no GitHub writes. Use `--project <id> --plan-next` from a building
 done project, or `--project <id> --plan` to resume drafting. N+1 can be drafted
 while N builds; its publish remains gated until N is done. Repeated plan-next
 resumes unfinished work and archives an already-published package only once.
+
+Raw agent logs and companion output support in-app click-drag selection. Drag at
+the top or bottom edge to scroll while retaining the anchor; mouse-wheel and
+keyboard scrolling also preserve the selection. Ctrl+C copies selected text;
+Escape clears selection, after which Ctrl+C quits normally. Ctrl+Y also copies.
+Copy sends plain text through OSC 52, so the terminal must permit clipboard
+writes. A terminal may reserve Ctrl+Shift+C for its own native selection; when it
+forwards Ctrl+C, Huddle copies the in-app selection. Shift-drag remains the
+terminal's native-selection alternative.
+
+The in-app approach keeps mouse-wheel scrolling, activity clicks and card buttons
+available. Dragging in raw-output/companion bodies now selects text. Selection
+clears on resize or a different log/window; it spans scrolling inside the loaded
+log window (up to 1 MiB). Copied text matches displayed rows, including selected
+timestamps; display padding and styling are removed.
