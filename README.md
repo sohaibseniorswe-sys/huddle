@@ -480,3 +480,12 @@ the milestone, dependency-ordered reference issues, and a clean dev-ready contro
 An active control blocks the next milestone. Adoption links and closes superseded
 issues. Completed steps are journaled for retry. Publishing leaves the project
 `published`; reopen it and choose Start when ready to build.
+
+Adopt an existing checkout with `huddle --adopt`; add `--respec` to normalize its
+open issues into replacement specs, or omit it to plan a fresh milestone. The
+project picker also offers adoption of the current directory. Identity follows
+the GitHub remote, falling back to directory when no remote exists. Adoption and
+planning make no GitHub writes. Use `--project <id> --plan-next` from a building or
+done project, or `--project <id> --plan` to resume drafting. N+1 can be drafted
+while N builds; its publish remains gated until N is done. Repeated plan-next
+resumes unfinished work and archives an already-published package only once.

@@ -6,18 +6,24 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
+	"github.com/sohaibseniorswe-sys/huddle/internal/lifecycle"
+	"github.com/sohaibseniorswe-sys/huddle/internal/onboarding"
 	"github.com/sohaibseniorswe-sys/huddle/internal/planning"
 	"github.com/sohaibseniorswe-sys/huddle/internal/publish"
 	"github.com/sohaibseniorswe-sys/huddle/internal/store"
 )
 
-func TestSandboxPublish(t *testing.T) {
+func TestSandboxPublish(t *testing.T)    { sandboxPublish(t, false) }
+func TestSandboxOnboarding(t *testing.T) { sandboxPublish(t, true) }
+
+func sandboxPublish(t *testing.T, onboard bool) {
 	if os.Getenv("HUDDLE_V4_SANDBOX") != "1" {
 		t.Skip("set HUDDLE_V4_SANDBOX=1 to publish a throwaway sandbox milestone")
 	}
@@ -41,8 +47,10 @@ func TestSandboxPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Put(ctx, store.Project{ID: "publish-evidence", Repo: sandbox, Branch: branch, Phase: "planning"}); err != nil {
-		t.Fatal(err)
+	if !onboard {
+		if err := s.Put(ctx, store.Project{ID: "publish-evidence", Repo: sandbox, Branch: branch, Phase: "planning"}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	w := planning.Workspace{Store: s, ProjectID: "publish-evidence"}
 	b, err := os.ReadFile("../planning/testdata/good.json")
@@ -55,7 +63,7 @@ func TestSandboxPublish(t *testing.T) {
 	}
 	d.Title = "v4 publish evidence " + stamp
 	d.Slug = "v4-publish-" + stamp
-	old, err := client.CreateIssue(ctx, sandbox, gh.NewIssue{Title: "Superseded fixture " + stamp, Body: "Throwaway adoption fixture."})
+	old, err := client.CreateIssue(ctx, sandbox, gh.NewIssue{Title: "Superseded fixture " + stamp, Body: "Provide a response equal to READY and verify the response. Normalize this requirement into a milestone spec."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +73,22 @@ func TestSandboxPublish(t *testing.T) {
 			t.Errorf("cleanup old: %s %v", out, err)
 		}
 	})
+	if onboard {
+		checkout := filepath.Join(t.TempDir(), "existing")
+		out, err := exec.CommandContext(ctx, "git", "clone", "--quiet", "--branch", branch, "https://github.com/"+sandbox+".git", checkout).CombinedOutput()
+		if err != nil {
+			t.Fatalf("sandbox clone: %s %v", out, err)
+		}
+		p, err := onboarding.Adopt(ctx, s, client, checkout, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.ProjectID = p.ID
+		adoptionContext, err := w.Context()
+		if err != nil || !strings.Contains(adoptionContext, fmt.Sprint(old)) || !strings.Contains(adoptionContext, "\"respec\": true") {
+			t.Fatalf("missing adoption source: %s %v", adoptionContext, err)
+		}
+	}
 	d.Issues[0].Supersedes = []int{old}
 	if err := w.Save(ctx, d); err != nil {
 		t.Fatal(err)
@@ -137,9 +161,28 @@ func TestSandboxPublish(t *testing.T) {
 	if err != nil || len(comments) == 0 || !strings.Contains(comments[len(comments)-1].Body, fmt.Sprintf("/issues/%d", result.Issues[d.Issues[0].ID])) {
 		t.Fatal("missing adoption link")
 	}
+	if onboard {
+		c := gh.Control{Client: client, Repo: sandbox, Number: result.Control}
+		if err := c.SetState(ctx, gh.StatePMWorking); err != nil {
+			t.Fatal(err)
+		}
+		p, err := s.Read(w.ProjectID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err = lifecycle.Refresh(ctx, client, s, p)
+		if err != nil || p.Phase != "building" {
+			t.Fatalf("building state %+v %v", p, err)
+		}
+		fresh, err := onboarding.BeginNext(ctx, w)
+		if err != nil || !fresh {
+			t.Fatalf("plan while building %v %v", fresh, err)
+		}
+	}
 	head := run("api", "repos/"+sandbox+"/git/ref/heads/"+branch, "--jq", ".object.sha")
 	d.Title += " next"
 	d.Slug += "-next"
+	d.Issues[0].Supersedes = nil
 	if err := w.Save(ctx, d); err != nil {
 		t.Fatal(err)
 	}
@@ -154,5 +197,57 @@ func TestSandboxPublish(t *testing.T) {
 	if after != head {
 		t.Fatal("gated publish changed branch")
 	}
+	if onboard {
+		for _, n := range result.Issues {
+			if err := client.CloseIssue(ctx, sandbox, n, "Sandbox acceptance verified."); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := (gh.Control{Client: client, Repo: sandbox, Number: result.Control}).SetState(ctx, gh.StateDone); err != nil {
+			t.Fatal(err)
+		}
+		run("api", "-X", "PATCH", fmt.Sprintf("repos/%s/milestones/%d", sandbox, result.Milestone), "-f", "state=closed")
+		p, err := s.Read(w.ProjectID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p, err = lifecycle.Refresh(ctx, client, s, p)
+		if err != nil || p.Phase != "done" {
+			t.Fatalf("done state %+v %v", p, err)
+		}
+		fresh, err := onboarding.BeginNext(ctx, w)
+		if err != nil || fresh {
+			t.Fatal("done entry discarded N+1 draft")
+		}
+		current, exists, err := w.Load()
+		if err != nil || !exists || len(current.Check()) != 0 {
+			t.Fatal("done entry could not resume N+1")
+		}
+		nextResult, err := publish.Publish(ctx, client, w, publish.Approval{Confirmed: true, Revision: next.Revision})
+		t.Cleanup(func() { cleanupPublished(t, nextResult) })
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("REAL onboarding: remote adopted into stable id %s; normalized issue #%d; N+1 drafted while PM-working and gated; done-project entry resumed N+1; then published control https://github.com/%s/issues/%d.", w.ProjectID, old, sandbox, nextResult.Control)
+	}
 	t.Logf("REAL sandbox publish: milestone https://github.com/%s/milestone/%d; control https://github.com/%s/issues/%d; implementation issue %v; superseded #%d closed and linked; labels ready; exact specs at https://github.com/%s/tree/%s/docs/%s; second active publish refused without branch changes.", sandbox, result.Milestone, sandbox, result.Control, result.Issues, old, sandbox, branch, preview.Draft.Slug)
+}
+
+func cleanupPublished(t *testing.T, r publish.Result) {
+	t.Helper()
+	for _, n := range r.Issues {
+		if out, err := exec.Command("gh", "issue", "close", fmt.Sprint(n), "--repo", sandbox).CombinedOutput(); err != nil {
+			t.Errorf("cleanup issue: %s %v", out, err)
+		}
+	}
+	if r.Control != 0 {
+		if out, err := exec.Command("gh", "issue", "close", fmt.Sprint(r.Control), "--repo", sandbox).CombinedOutput(); err != nil {
+			t.Errorf("cleanup control: %s %v", out, err)
+		}
+	}
+	if r.Milestone != 0 {
+		if out, err := exec.Command("gh", "api", "-X", "PATCH", fmt.Sprintf("repos/%s/milestones/%d", sandbox, r.Milestone), "-f", "state=closed").CombinedOutput(); err != nil {
+			t.Errorf("cleanup milestone: %s %v", out, err)
+		}
+	}
 }

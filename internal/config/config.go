@@ -239,3 +239,57 @@ func AutonomyName(level int) string {
 		return "Full autonomy"
 	}
 }
+
+// LoadID reads settings by stable identity, including projects with no repo.
+func LoadID(root, id string) (Config, bool, error) {
+	s := store.Store{Root: root}
+	p, err := s.Read(id)
+	if err != nil {
+		return Config{}, false, err
+	}
+	path := filepath.Join(s.Data(), "config", id+".yaml")
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		c := Default(p.Repo)
+		c.Dir = p.Dir
+		return c, false, nil
+	}
+	if err != nil {
+		return Config{}, false, err
+	}
+	c := Default(p.Repo)
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) {
+		return Config{}, true, err
+	}
+	return c, true, nil
+}
+
+// SaveID stores settings under an existing stable id without inventing a repo.
+func SaveID(root, id string, c Config) error {
+	s := store.Store{Root: root}
+	p, err := s.Read(id)
+	if err != nil {
+		return err
+	}
+	if c.Repo != p.Repo {
+		return fmt.Errorf("config repo must match project identity")
+	}
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	var body bytes.Buffer
+	enc := yaml.NewEncoder(&body)
+	enc.SetIndent(2)
+	if err := enc.Encode(c); err != nil {
+		return err
+	}
+	if err := enc.Close(); err != nil {
+		return err
+	}
+	if err := s.Write(filepath.Join("config", id+".yaml"), append([]byte(header+"\n"), body.Bytes()...)); err != nil {
+		return err
+	}
+	return s.Put(context.Background(), p)
+}

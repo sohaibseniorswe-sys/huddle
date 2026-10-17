@@ -14,8 +14,9 @@ import (
 
 // ProjectChoice is a registry selection. New creates an unnamed planning identity.
 type ProjectChoice struct {
-	ID  string
-	New bool
+	ID    string
+	New   bool
+	Adopt bool
 }
 
 // Route identifies the screen offered when a project is opened.
@@ -80,7 +81,7 @@ type projectMenu struct {
 func (m projectMenu) Init() tea.Cmd { return nil }
 func (m projectMenu) View() string {
 	rows := ProjectRows(m.projects)
-	rows = append(rows, "New project")
+	rows = append(rows, "Adopt current directory (plan a fresh milestone)", "New project")
 	for i := range rows {
 		if i == m.sel {
 			rows[i] = ui.Bold.Render("› " + rows[i])
@@ -98,11 +99,14 @@ func (m projectMenu) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			m.sel = max(0, m.sel-1)
 		case "down", "j":
-			m.sel = min(len(m.projects), m.sel+1)
+			m.sel = min(len(m.projects)+1, m.sel+1)
 		case "enter":
-			if m.sel == len(m.projects) {
+			switch m.sel {
+			case len(m.projects):
+				m.choice.Adopt = true
+			case len(m.projects) + 1:
 				m.choice.New = true
-			} else {
+			default:
 				m.choice.ID = m.projects[m.sel].ID
 			}
 			return m, tea.Quit

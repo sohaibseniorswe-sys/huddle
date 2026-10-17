@@ -33,7 +33,7 @@ func TestProjectListingAndPicker(t *testing.T) {
 	if next.(projectMenu).choice.ID != "one" {
 		t.Fatal("wrong project selected")
 	}
-	m.sel = 2
+	m.sel = 3
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if !next.(projectMenu).choice.New {
 		t.Fatal("new unavailable")
