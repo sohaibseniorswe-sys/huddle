@@ -2,6 +2,7 @@ package app
 
 import (
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -21,12 +22,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
+		m.selection = textSelection{}
 		m.width, m.height = msg.Width, msg.Height
 		m.rendered = nil // the events must be wrapped again at the new width
 
 	case tea.KeyMsg:
 		m, cmd = m.handleKey(msg)
 
+	case clipboardClearMsg:
+		if msg.epoch == m.clipboardEpoch {
+			m.clipboardFrame = ""
+		}
+	case selectionTickMsg:
+		if m.selection.dragging {
+			m = m.moveSelection(true)
+			cmd = selectionTick()
+		}
 	case tea.MouseMsg:
 		m, cmd = m.handleMouse(msg)
 
@@ -108,6 +119,18 @@ func (m Model) handleStatus(s loop.Status) (Model, tea.Cmd) {
 
 // handleKey sends a key press to the focused element, and nowhere else.
 func (m Model) handleKey(k tea.KeyMsg) (Model, tea.Cmd) {
+	if m.selection.active() && !m.quitting {
+		switch k.String() {
+		case "ctrl+c", "ctrl+y", "ctrl+shift+c":
+			m = m.copySelection()
+			epoch := m.clipboardEpoch
+			return m, tea.Tick(200*time.Millisecond, func(time.Time) tea.Msg { return clipboardClearMsg{epoch} })
+		case "esc":
+			m.selection = textSelection{}
+			return m, nil
+		}
+	}
+
 	// Ctrl+C works everywhere and behaves like /quit. Pressed again while
 	// Huddle is stopping, it quits at once.
 	if k.Type == tea.KeyCtrlC {
@@ -331,6 +354,9 @@ func (m Model) listKey(k tea.KeyMsg) Model {
 func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 	if m.tooSmall() {
 		return m, nil
+	}
+	if selected, cmd, handled := m.selectionMouse(msg); handled {
+		return selected, cmd
 	}
 	l := m.layout()
 	inActivity := msg.Y >= l.activityTop && msg.Y < l.activityTop+l.activityRows

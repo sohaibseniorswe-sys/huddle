@@ -162,7 +162,10 @@ const (
 // Model is the run screen's state. See the package comment for how Bubble
 // Tea uses it.
 type Model struct {
-	cfg Config
+	selection      textSelection
+	clipboardEpoch int
+	clipboardFrame string // OSC 52 emitted in the next rendered frame only
+	cfg            Config
 
 	width, height int // the terminal size, from tea.WindowSizeMsg
 	now           time.Time
