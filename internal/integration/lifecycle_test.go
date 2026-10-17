@@ -31,6 +31,9 @@ func startSandboxBuild(t *testing.T, ctx context.Context, s store.Store, id stri
 		t.Fatal(err)
 	}
 	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+		if _, err := os.Stat(filepath.Join(p.Dir, name)); err == nil {
+			continue
+		}
 		if err := os.WriteFile(filepath.Join(p.Dir, name), []byte("Sandbox lifecycle fixture. Reload durable state; only operate on this sandbox milestone.\n"), 0600); err != nil {
 			t.Fatal(err)
 		}

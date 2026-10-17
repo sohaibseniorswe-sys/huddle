@@ -44,6 +44,8 @@ saving the proposal creates no directory or repository. `/publish` reviews the
 full destination and package before Agree authorizes creation of a **private**
 repository. Huddle creates the directory, initializes the remote through gh/API,
 and performs a one-time bootstrap clone before publishing the first milestone.
+Bootstrap also supplies local `AGENTS.md` and `CLAUDE.md` starters so first Start
+passes its instruction-file checks; agents can customize and commit them.
 The directory must be new; an existing repository is accepted only as recovery
 of this identity's journaled setup and must retain its private ownership marker.
 

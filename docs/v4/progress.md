@@ -260,3 +260,12 @@ Evidence: `docs/v4/evidence/09-new-project.md`; #24 final writeup follows.
 Validation: full Go tests, vet and canonical build passed; final CI pending.
 Deviations: bootstrap uses the PM-permitted one-time clone, explicitly documented.
 Human needed: none.
+
+v4.09 verification correction (04:33 UTC): review found that the original
+lifecycle harness supplied AGENTS.md/CLAUDE.md, masking a first-Start precondition.
+Bootstrap now creates non-overwriting local instruction starters without Git
+commits. The harness requires them before launch and preserves them. A follow-up
+uses the same private repo and a second isolated root, including recovery of the
+already-created remote. Its first attempt hit a duplicate fixture milestone title
+(HTTP 422); the fixture now uses a unique title, and retry retains the completed
+setup. No second repo was created. Final result recorded below.

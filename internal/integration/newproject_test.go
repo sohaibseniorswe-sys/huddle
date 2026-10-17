@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sohaibseniorswe-sys/huddle/internal/checks"
 	"github.com/sohaibseniorswe-sys/huddle/internal/config"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/lifecycle"
@@ -70,6 +71,7 @@ func TestNewProjectLifecycle(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		d.Title = "New project acceptance " + filepath.Base(root)
 		d.Project = &planning.NewProject{Name: "New project acceptance", Dir: filepath.Join(root, "workspace"), Repo: repo, Branch: "v4-acceptance"}
 		if err := w.Save(ctx, d); err != nil {
 			t.Fatal(err)
@@ -97,11 +99,6 @@ func TestNewProjectLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("REAL mid-planning resume: id=%s phase=%s name=%s dir=%s repo=%s; proposed destination=%+v", id, p.Phase, p.Name, p.Dir, p.Repo, *preview.Draft.Project)
-	result, err := publish.Publish(ctx, client, w, publish.Approval{Confirmed: true, Revision: preview.Revision})
-	t.Logf("REAL first publish result: %+v (error=%v); isolated root=%s", result, err, root)
-	if err != nil {
-		t.Fatal(err)
-	}
 	// Archive even if later acceptance fails; evidence remains readable and private.
 	t.Cleanup(func() {
 		out, err := exec.Command("gh", "repo", "archive", repo, "--yes").CombinedOutput()
@@ -111,6 +108,12 @@ func TestNewProjectLifecycle(t *testing.T) {
 			t.Logf("Archived private acceptance repository %s", repo)
 		}
 	})
+	result, err := publish.Publish(ctx, client, w, publish.Approval{Confirmed: true, Revision: preview.Revision})
+	t.Logf("REAL first publish result: %+v (error=%v); isolated root=%s", result, err, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	p, err = s.Read(id)
 	if err != nil {
 		t.Fatal(err)
@@ -122,6 +125,9 @@ func TestNewProjectLifecycle(t *testing.T) {
 	cfg, exists, err := config.LoadID(root, id)
 	if err != nil || !exists || cfg.Repo != repo || cfg.Dir != p.Dir {
 		t.Fatalf("new destination settings %+v %v %v", cfg, exists, err)
+	}
+	if _, err := checks.EnsureAgentFiles(p.Dir); err != nil {
+		t.Fatalf("new checkout cannot start without harness scaffolding: %v", err)
 	}
 	finish := startSandboxBuild(t, ctx, s, id, result, d.Slug)
 	p, err = s.Read(id)

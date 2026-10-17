@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/sohaibseniorswe-sys/huddle/internal/checks"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/planning"
 	"github.com/sohaibseniorswe-sys/huddle/internal/store"
@@ -144,6 +145,9 @@ func TestNewProjectResumesCreationAndClone(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(p.Dir, ".git")); err != nil {
 		t.Fatal("bootstrap missing", err)
+	}
+	if _, err := checks.EnsureAgentFiles(p.Dir); err != nil {
+		t.Fatalf("new project cannot start: %v", err)
 	}
 	calls := f.calls
 	if _, err := Publish(ctx, f, w, a); err != nil {

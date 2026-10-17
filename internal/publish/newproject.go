@@ -120,6 +120,9 @@ func provision(ctx context.Context, c gh.Client, w planning.Workspace, p store.P
 	if err := bootstrap(ctx, p); err != nil {
 		return err
 	}
+	if err := starterFiles(p); err != nil {
+		return err
+	}
 	cfg, _, err := config.LoadID(w.Store.Root, w.ProjectID)
 	if err != nil {
 		return err
@@ -207,3 +210,27 @@ func bootstrap(ctx context.Context, p store.Project) error {
 }
 
 func stagingPath(p store.Project) string { return p.Dir + ".huddle-" + p.ID + "-clone" }
+
+// Starter instruction files satisfy first-start checks without taking ownership
+// of project Git. Agents can edit and commit them; retries preserve their edits.
+func starterFiles(p store.Project) error {
+	text := fmt.Sprintf("# Project conventions\n\nWorking branch: `%s`.\nAt the start of each turn, read the control issue and comments, milestone README\nand issue specs, Session.md and recent Git history. Follow the active Huddle\nrole instructions. Agents own all project Git operations after initial setup.\n", p.Branch)
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+		f, err := os.OpenFile(filepath.Join(p.Dir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		_, writeErr := f.WriteString(text)
+		closeErr := f.Close()
+		if writeErr != nil {
+			return writeErr
+		}
+		if closeErr != nil {
+			return closeErr
+		}
+	}
+	return nil
+}
