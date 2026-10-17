@@ -158,7 +158,7 @@ func (c *Codex) finishCommand(exitCode string, at time.Time) {
 }
 
 // commandText shortens the command line codex prints after "exec", for
-// example `/bin/bash -lc 'go test ./...' in /home/u/projects/palantir`, to
+// example `/bin/bash -lc 'go test ./...' in /home/u/projects/example`, to
 // the command itself: `go test ./...`.
 func commandText(line string) string {
 	s := strings.TrimSpace(line)

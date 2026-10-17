@@ -36,6 +36,7 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/config"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gitx"
+	"github.com/sohaibseniorswe-sys/huddle/internal/lifecycle"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
 	"github.com/sohaibseniorswe-sys/huddle/internal/runner"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
@@ -50,13 +51,15 @@ var version = "0.1.0-dev"
 
 // deps holds everything run touches outside the process, so tests can fake it.
 type deps struct {
-	stdin     io.Reader
-	stdout    io.Writer
-	stderr    io.Writer
-	getwd     func() (string, error)
-	lookupEnv func(string) (string, bool)
-	gh        gh.Client
-	agents    checks.AgentCLIs
+	runProjects func(context.Context, []store.Project) (start.ProjectChoice, error)
+	runDone     func(context.Context, store.Project) (bool, error)
+	stdin       io.Reader
+	stdout      io.Writer
+	stderr      io.Writer
+	getwd       func() (string, error)
+	lookupEnv   func(string) (string, bool)
+	gh          gh.Client
+	agents      checks.AgentCLIs
 	// runAgents returns the agents for the watch loop, run in repo root
 	// dir and played as team says. stream receives their raw output (nil
 	// for the run screen).
@@ -79,13 +82,15 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	os.Exit(run(ctx, os.Args[1:], deps{
-		stdin:     os.Stdin,
-		stdout:    os.Stdout,
-		stderr:    os.Stderr,
-		getwd:     os.Getwd,
-		lookupEnv: os.LookupEnv,
-		gh:        gh.CLI{},
-		agents:    checks.AgentCLIs{LookPath: exec.LookPath, Run: checks.ExecRun},
+		stdin:       os.Stdin,
+		runProjects: start.PickProject,
+		runDone:     start.ChooseDone,
+		stdout:      os.Stdout,
+		stderr:      os.Stderr,
+		getwd:       os.Getwd,
+		lookupEnv:   os.LookupEnv,
+		gh:          gh.CLI{},
+		agents:      checks.AgentCLIs{LookPath: exec.LookPath, Run: checks.ExecRun},
 		runAgents: func(dir, home string, team agents.Team, stream io.Writer) loop.Agents {
 			return loop.CLIAgents{Dir: dir, Home: home, Team: team, Stream: stream}
 		},
@@ -98,6 +103,9 @@ func main() {
 }
 
 type options struct {
+	project    string
+	list       bool
+	newProject bool
 	home       string
 	dataRemote string
 	setup      bool // `huddle setup`: run the setup wizard
@@ -126,7 +134,10 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fs.BoolVar(&o.yes, "yes", false, "skip the confirmation prompt")
 	fs.BoolVar(&o.once, "once", false, "run a single turn, then stop (with --plain: exit)")
 	fs.BoolVar(&o.plain, "plain", false, "print plain lines to stdout instead of the full-screen UI (as v1 did)")
-	fs.StringVar(&o.repo, "repo", checks.DefaultRepo, "target repo as owner/name (for testing against the sandbox)")
+	fs.StringVar(&o.repo, "repo", "", "open a repo as owner/name (legacy direct entry)")
+	fs.StringVar(&o.project, "project", "", "open a registry project by internal id")
+	fs.BoolVar(&o.list, "list", false, "list registry projects without network calls")
+	fs.BoolVar(&o.newProject, "new", false, "start an unnamed planning project")
 	// The default 0 is never used (autonomySet says whether the flag was
 	// given); a zero default keeps "(default 0)" out of the help text.
 	fs.IntVar(&o.autonomy, "autonomy", 0, "autonomy level for this run only, 0 (most careful) to 10 (most independent); overrides the settings file")
@@ -153,7 +164,13 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	if len(args) > 0 {
 		return o, fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
 	}
-	if err := checks.ValidateRepo(o.repo); err != nil {
+	repoSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "repo" {
+			repoSet = true
+		}
+	})
+	if err := checks.ValidateRepo(o.repo); repoSet && err != nil {
 		return o, fmt.Errorf("--repo: %w", err)
 	}
 	// fs.Visit calls its function only for the flags given on the command
@@ -208,7 +225,7 @@ func run(ctx context.Context, args []string, d deps) int {
 	}
 
 	target := opts.repo
-	if target != checks.DefaultRepo {
+	if target != "" {
 		fmt.Fprintf(d.stdout, "target: %s (override)\n", target)
 	}
 
@@ -218,8 +235,106 @@ func run(ctx context.Context, args []string, d deps) int {
 	if err != nil {
 		return fail(err)
 	}
-	if _, err := store.Open(ctx, home, opts.dataRemote); err != nil {
+	st, err := store.Open(ctx, home, opts.dataRemote)
+	if err != nil {
 		return fail(err)
+	}
+	projects, err := st.List()
+	if err != nil {
+		return fail(err)
+	}
+	if opts.list {
+		for _, row := range start.ProjectRows(projects) {
+			fmt.Fprintln(d.stdout, row)
+		}
+		return 0
+	}
+	var selected *store.Project
+	if target == "" {
+		choice := start.ProjectChoice{ID: opts.project, New: opts.newProject}
+		if choice.ID == "" && !choice.New {
+			if d.runProjects == nil {
+				return fail(errors.New("choose --project, --repo or --new"))
+			}
+			choice, err = d.runProjects(ctx, projects)
+			if err != nil {
+				return fail(err)
+			}
+		}
+		if choice.New {
+			id, err := store.NewID()
+			if err != nil {
+				return fail(err)
+			}
+			p := store.Project{ID: id, Phase: "planning", Status: "PLANNED"}
+			if err := st.Put(ctx, p); err != nil {
+				return fail(err)
+			}
+			selected = &p
+		} else if choice.ID != "" {
+			p, err := st.Read(choice.ID)
+			if err != nil {
+				return fail(err)
+			}
+			selected = &p
+		} else {
+			return 0
+		}
+		p, err := lifecycle.Refresh(ctx, d.gh, st, *selected)
+		if err != nil {
+			return fail(err)
+		}
+		selected = &p
+		route, err := start.ProjectRoute(p.Phase)
+		if err != nil {
+			return fail(err)
+		}
+		fmt.Fprintf(d.stdout, "%s: %s\n", p.ID, route)
+		switch route {
+		case start.RoutePlan:
+			opts.plan = true
+		case start.RouteStart:
+			opts.runTitle = "" // the milestone picker offers Start
+		case start.RouteResume:
+			opts.resume = true
+		case start.RouteDone:
+			if d.runDone == nil {
+				return fail(errors.New("done project: choose plan next or archive"))
+			}
+			archive, err := d.runDone(ctx, p)
+			if errors.Is(err, context.Canceled) {
+				return 0
+			}
+			if err != nil {
+				return fail(err)
+			}
+			if archive {
+				p.Archived = true
+				if err := st.Put(ctx, p); err != nil {
+					return fail(err)
+				}
+				return 0
+			}
+			opts.plan = true
+		}
+		target = p.Repo
+		if p.Dir != "" {
+			d.getwd = func() (string, error) { return p.Dir, nil }
+		}
+	}
+	// A planning identity needs no project checkout, GitHub, or build agents.
+	if selected != nil && target == "" {
+		cfg := config.Default("")
+		team, err := cfg.Team()
+		if err != nil {
+			return fail(err)
+		}
+		root := st.Data()
+		s := starter{d: d, opts: opts, projectID: selected.ID, target: "", home: home, root: root, cfg: cfg, team: team}
+		ui := s.screenConfig(gh.Issue{})
+		ui.Planning = true
+		code, _ := d.runUI(ctx, ui, d.stderr)
+		return code
 	}
 	settingsPath := tildePath(config.Path(home, target), d.lookupEnv)
 	cfg, exists, err := config.Load(home, target)
@@ -339,7 +454,18 @@ func run(ctx context.Context, args []string, d deps) int {
 		return 0
 	}
 
-	s := starter{d: d, opts: opts, cfg: cfg, team: team, versions: versions, home: home, target: target, root: root, exists: exists}
+	project, found, err := st.FindRepo(target)
+	if err != nil {
+		return fail(err)
+	}
+	if !found {
+		project = store.Project{ID: store.RepoID(target), Name: target, Repo: target, Phase: "planning", Status: "PLANNED"}
+	}
+	project.Dir = root
+	if err := st.Put(ctx, project); err != nil {
+		return fail(err)
+	}
+	s := starter{projectID: project.ID, d: d, opts: opts, cfg: cfg, team: team, versions: versions, home: home, target: target, root: root, exists: exists}
 	if opts.plain {
 		return s.runPlain(ctx, in, reopened)
 	}
@@ -374,15 +500,16 @@ func reopenUnfinished(ctx context.Context, d deps, target string, in *bufio.Read
 // starter starts milestones once the startup checks have passed: on the
 // run screen (with the start menu) or, with --plain, as Huddle v1 did.
 type starter struct {
-	d        deps
-	opts     options
-	cfg      config.Config
-	team     agents.Team
-	versions map[string]string
-	home     string
-	target   string
-	root     string // the repo's local clone
-	exists   bool   // the settings file exists
+	projectID string
+	d         deps
+	opts      options
+	cfg       config.Config
+	team      agents.Team
+	versions  map[string]string
+	home      string
+	target    string
+	root      string // the repo's local clone
+	exists    bool   // the settings file exists
 }
 
 // runPlain is v1's start: the single open control issue, a confirmation,
@@ -516,8 +643,13 @@ func (s starter) choose(ctx context.Context, queue start.Queue) (cfg app.Config,
 // of their own, numbered 0.
 func (s starter) screenConfig(control gh.Issue) app.Config {
 	d := s.d
+	memoryKey := s.target
+	if memoryKey == "" {
+		memoryKey = s.projectID
+	}
 	userHome, _ := d.lookupEnv("HOME")
 	return app.Config{
+		ProjectID: s.projectID,
 		Repo:      s.target,
 		Milestone: control.Milestone,
 		Control:   gh.Control{Client: d.gh, Repo: s.target, Number: control.Number},
@@ -531,7 +663,7 @@ func (s starter) screenConfig(control gh.Issue) app.Config {
 			CompanionFollowsPM: s.cfg.Agents.Companion.SameAsPM,
 			Versions:           s.versions,
 			Sessions:           session.New(s.home, s.target, control.Number),
-			CompanionSessions:  session.NewCompanion(s.home, s.target, control.Number),
+			CompanionSessions:  session.NewCompanion(s.home, memoryKey, control.Number),
 		},
 		LogDir:  runner.LogDir(s.home),
 		RepoDir: s.root,
@@ -542,11 +674,11 @@ func (s starter) screenConfig(control gh.Issue) app.Config {
 			Dir:       s.root,
 			Home:      s.home,
 			Milestone: control.Milestone,
-			Sessions:  session.NewCompanion(s.home, s.target, control.Number),
+			Sessions:  session.NewCompanion(s.home, memoryKey, control.Number),
 			Run:       runner.Run,
 			Now:       time.Now,
 		},
-		History: companion.NewHistory(s.home, s.target, control.Number),
+		History: companion.NewHistory(s.home, memoryKey, control.Number),
 		First:   control,
 		NewLoop: func(c gh.Issue) *loop.Loop { return s.newLoop(c, nil) },
 		Queue:   start.NewQueue(s.home, s.target),

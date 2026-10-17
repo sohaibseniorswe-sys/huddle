@@ -22,6 +22,7 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
 	"github.com/sohaibseniorswe-sys/huddle/internal/start"
+	"github.com/sohaibseniorswe-sys/huddle/internal/store"
 	"github.com/sohaibseniorswe-sys/huddle/internal/wizard"
 )
 
@@ -287,7 +288,7 @@ func TestStartupFailures(t *testing.T) {
 		if code := run(context.Background(), nil, d); code != 1 {
 			t.Fatalf("exit %d, want 1", code)
 		}
-		if !strings.Contains(stderr.String(), checks.DefaultRepo) {
+		if !strings.Contains(stderr.String(), "choose --project, --repo or --new") {
 			t.Errorf("stderr %q", stderr.String())
 		}
 	})
@@ -503,7 +504,7 @@ func TestSetupRunsTheWizardWithTheCurrentSettings(t *testing.T) {
 }
 
 func TestPlainWithoutSettings(t *testing.T) {
-	for _, args := range [][]string{{"--repo", sandbox, "--plain"}, {"--plain", "setup"}} {
+	for _, args := range [][]string{{"--repo", sandbox, "--plain"}, {"--plain", "setup", "--repo", sandbox}} {
 		d, _, stderr := testDeps(t, t.TempDir(), nil, "")
 		d.runWizard = func(context.Context, wizard.Deps, config.Config) (config.Config, error) {
 			t.Error("the wizard ran with --plain")
@@ -778,5 +779,47 @@ func TestRunFlagUsesTheExistingControlIssue(t *testing.T) {
 	}
 	if fake.Issues[0].Body != "hand-written" || len(fake.Issues) != 1 {
 		t.Errorf("issues = %+v", fake.Issues)
+	}
+}
+
+func TestRegistryListingDoesNotReadGitHub(t *testing.T) {
+	d, out, errout := testDeps(t, t.TempDir(), nil, "")
+	home, _ := d.lookupEnv("HOME")
+	root := filepath.Join(home, ".huddle")
+	st, err := store.Open(context.Background(), root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Put(context.Background(), store.Project{ID: "ordinary", Name: "Example", Repo: "owner/repo", Phase: "building", Status: "ACTIVE"}); err != nil {
+		t.Fatal(err)
+	}
+	d.gh = &gh.Fake{ListErr: errors.New("must not query GitHub")}
+	if code := run(context.Background(), []string{"--list"}, d); code != 0 {
+		t.Fatalf("exit %d: %s", code, errout.String())
+	}
+	if !strings.Contains(out.String(), "Example · ACTIVE · building [ordinary]") {
+		t.Fatalf("listing %s", out.String())
+	}
+}
+
+func TestNewProjectRoutesToPlanningWithoutCheckout(t *testing.T) {
+	d, _, errout := testDeps(t, t.TempDir(), nil, "")
+	d.gh = &gh.Fake{ListErr: errors.New("must not query GitHub")}
+	var opened app.Config
+	d.runUI = func(_ context.Context, cfg app.Config, _ io.Writer) (int, bool) { opened = cfg; return 0, false }
+	if code := run(context.Background(), []string{"--new"}, d); code != 0 {
+		t.Fatalf("exit %d: %s", code, errout.String())
+	}
+	if !opened.Planning || opened.Repo != "" || opened.ProjectID == "" {
+		t.Fatalf("opened %+v", opened)
+	}
+	home, _ := d.lookupEnv("HOME")
+	st := store.Store{Root: filepath.Join(home, ".huddle")}
+	ps, err := st.List()
+	if err != nil || len(ps) != 1 || ps[0].ID != opened.ProjectID || ps[0].Phase != "planning" {
+		t.Fatalf("persisted %+v %v", ps, err)
+	}
+	if code := run(context.Background(), []string{"--project", opened.ProjectID}, d); code != 0 {
+		t.Fatalf("resume exit %d: %s", code, errout.String())
 	}
 }
