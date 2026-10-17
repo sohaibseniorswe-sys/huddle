@@ -505,7 +505,7 @@ func run(ctx context.Context, args []string, d deps) int {
 	if err := st.Put(ctx, project); err != nil {
 		return fail(err)
 	}
-	s := starter{projectID: project.ID, d: d, opts: opts, cfg: cfg, team: team, versions: versions, home: home, target: target, root: root, exists: exists}
+	s := starter{freshSessions: selected != nil, projectID: project.ID, d: d, opts: opts, cfg: cfg, team: team, versions: versions, home: home, target: target, root: root, exists: exists}
 	if opts.plain {
 		return s.runPlain(ctx, in, reopened)
 	}
@@ -540,16 +540,17 @@ func reopenUnfinished(ctx context.Context, d deps, target string, in *bufio.Read
 // starter starts milestones once the startup checks have passed: on the
 // run screen (with the start menu) or, with --plain, as Huddle v1 did.
 type starter struct {
-	projectID string
-	d         deps
-	opts      options
-	cfg       config.Config
-	team      agents.Team
-	versions  map[string]string
-	home      string
-	target    string
-	root      string // the repo's local clone
-	exists    bool   // the settings file exists
+	freshSessions bool
+	projectID     string
+	d             deps
+	opts          options
+	cfg           config.Config
+	team          agents.Team
+	versions      map[string]string
+	home          string
+	target        string
+	root          string // the repo's local clone
+	exists        bool   // the settings file exists
 }
 
 // runPlain is v1's start: the single open control issue, a confirmation,
@@ -587,14 +588,30 @@ func (s starter) runPlain(ctx context.Context, in *bufio.Reader, reopened *gh.Is
 // terminal but the screen). The caller sets Report and Controls.
 func (s starter) newLoop(control gh.Issue, stream io.Writer) *loop.Loop {
 	return &loop.Loop{
-		Control:   gh.Control{Client: s.d.gh, Repo: s.target, Number: control.Number},
-		Milestone: control.Milestone,
-		Agents:    s.d.runAgents(s.root, s.home, s.team, stream),
-		Team:      s.team,
-		Autonomy:  s.cfg.Autonomy,
-		Sessions:  session.New(s.home, s.target, control.Number),
-		Clock:     s.d.clock,
-		Once:      s.opts.once,
+		Control:       gh.Control{Client: s.d.gh, Repo: s.target, Number: control.Number},
+		Milestone:     control.Milestone,
+		Agents:        s.d.runAgents(s.root, s.home, s.team, stream),
+		Team:          s.team,
+		Autonomy:      s.cfg.Autonomy,
+		Sessions:      session.New(s.home, s.target, control.Number),
+		Clock:         s.d.clock,
+		Once:          s.opts.once,
+		FreshSessions: s.freshSessions,
+		BeforeTurn: func(ctx context.Context, _ session.Role) error {
+			if !s.freshSessions {
+				return nil
+			}
+			st := store.Store{Root: s.home}
+			p, err := st.Read(s.projectID)
+			if err != nil {
+				return err
+			}
+			p.Started = true
+			p.Control = control.Number
+			p.Phase = "building"
+			p.Status = "ACTIVE"
+			return st.Put(ctx, p)
+		},
 	}
 }
 

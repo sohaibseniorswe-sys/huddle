@@ -79,16 +79,18 @@ var _ Sessions = session.Store{}
 
 // Loop is the watch loop for one control issue.
 type Loop struct {
-	Control   gh.Control
-	Milestone string
-	Agents    Agents
-	Team      agents.Team // what plays the Dev and the PM, for names and usage limits
-	Autonomy  int         // the autonomy level (0–10) written into every launch prompt
-	Sessions  Sessions
-	Clock     Clock
-	Report    Reporter  // told about every step and status change
-	Controls  *Controls // pause, resume and wake from the run screen; must not be nil
-	Once      bool      // run a single turn, then exit
+	Control       gh.Control
+	Milestone     string
+	Agents        Agents
+	Team          agents.Team // what plays the Dev and the PM, for names and usage limits
+	Autonomy      int         // the autonomy level (0–10) written into every launch prompt
+	Sessions      Sessions
+	Clock         Clock
+	Report        Reporter                                  // told about every step and status change
+	Controls      *Controls                                 // pause, resume and wake from the run screen; must not be nil
+	BeforeTurn    func(context.Context, session.Role) error // persist v4 lifecycle before launching a turn
+	FreshSessions bool                                      // v4: every issue/role turn starts fresh; retries within a turn may resume
+	Once          bool                                      // run a single turn, then exit
 
 	turn   int    // turns started by this process, for log names
 	status Status // the status last reported
@@ -253,18 +255,36 @@ func (l *Loop) setStatus(phase Phase, role session.Role, until time.Time) {
 // fallback (8.4), usage-limit waits and escalation (8.6) and anti-stall
 // (8.3). It returns errInterrupted on Ctrl+C.
 func (l *Loop) turnFor(ctx context.Context, role session.Role) error {
+	if l.BeforeTurn != nil {
+		if err := l.BeforeTurn(ctx, role); err != nil {
+			l.printf("persist turn: %v", err)
+			return err
+		}
+	}
 	l.turn++
 	l.setStatus(PhaseWorking, role, time.Time{})
 	working, ready := workingLabel(role), readyLabel(role)
 	if err := l.retry(ctx, "set "+working, func() error { return l.Control.SetState(ctx, working) }); err != nil {
 		return err
 	}
-	prompt, err := prompts.Launch(prompts.Role(role), l.Team.For(role).CLI.Name, l.Milestone, l.Control.Number, l.Autonomy)
+	launch := prompts.Launch
+	if l.FreshSessions {
+		launch = prompts.IssueLaunch
+	}
+	prompt, err := launch(prompts.Role(role), l.Team.For(role).CLI.Name, l.Milestone, l.Control.Number, l.Autonomy)
 	if err != nil {
 		return err // only for an unknown role
 	}
 
 	sessionID := l.Sessions.Load().Get(role)
+	if l.FreshSessions {
+		// Saved ids remain diagnostic; never carry a prior issue transcript into
+		// a new turn, including after a hard stop. Usage retries below stay scoped.
+		sessionID = ""
+		if err := l.Sessions.Forget(role); err != nil {
+			return fmt.Errorf("clear prior issue session: %w", err)
+		}
+	}
 	freshTried := false    // the resume fallback runs once per turn
 	waitCommented := false // one usage-wait comment per wait
 	for {
