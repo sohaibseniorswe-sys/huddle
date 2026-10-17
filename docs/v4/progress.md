@@ -200,3 +200,45 @@ One entry per issue: start/finish time, what was built, deviations from the spec
   available in this headless session. Selection spans the loaded log window and
   resets when a different window/source is loaded.
 - Deviations: none. Human needed: none.
+
+## v4.09 — #21 convention conflict, not completed
+
+- Start: 2026-10-16 23:52 EDT; turn checkpoint: 2026-10-17 00:16 EDT.
+- The new unnamed identity and durable planning foundation are implemented in
+  #15/#19. Remaining name/directory/repo output creation is not implemented.
+- Blocker: #21's real new-repo walkthrough conflicts with AGENTS.md's prescribed
+  huddle-sandbox-only real runs; the README also reserves project Git operations
+  to agents while a new build needs an initialized checkout. Decision request:
+  https://github.com/sohaibseniorswe-sys/huddle/issues/21#issuecomment-6229298323
+- The PM should resolve the acceptance scope and bootstrap ownership. An
+  agent-owned bootstrap is an option to preserve the Git invariant; new-repo
+  creation should remain within the human-approved publish write path.
+- No extra repository or unapproved project checkout operation was performed.
+  Human needed: none at this point; PM decision required. Issue remains open.
+
+## v4.12 — #24 integration checkpoint, not completed
+
+- Start: 2026-10-17 00:04 EDT; turn checkpoint: 00:16 EDT. Final finish pending #21.
+- Built: adopted-project publish → real binary Dev/PM loop → done → plan-next
+  integration harness, fresh-root clone/list proof, current operating guide and
+  README/CLI help. Audit fixes: all-page GraphQL issue/control discovery and
+  milestone work reads (no 200/1000 truncation), and planning autonomy override
+  applied without persisting the run-only setting. A REST pagination prototype
+  exposed a fresh-read timing failure and was discarded in favor of the existing
+  GraphQL semantics with pagination.
+- REAL sandbox evidence: normalized #66 → #67, N control #68, N+1 control #70;
+  N+1 drafted/gated while a real scripted PM process held the build lease; Dev
+  and PM started fresh, PM reached done; a fresh clone listed two stable IDs and
+  correct then-current cached statuses. Fixtures closed, evidence branch retained.
+  Details: `docs/v4/evidence/12-adopted-lifecycle.md`.
+- Regression: full tests/vet/gofmt/canonical build pass; v3 direct-entry/session/
+  prompt/golden checks remain green. PRs #26–#35 passed Linux/macOS CI.
+- Correction to v4.06: full-app Windows cross-compilation did NOT pass; the base
+  runner already uses Unix-only Setpgid/syscall.Kill. Only the new lock package
+  compiles for Windows. Earlier progress/PR wording overstated that check; PR #31
+  metadata has been corrected. Linux binary restored. Race unavailable: no C
+  compiler. See `docs/v4/evidence/12-regression.md`.
+- Remaining: implement/evidence #21's complete from-scratch flow, then finish the
+  exact new → plan → publish → build → done → plan-next acceptance and close #24.
+  An adopted-project run is not claimed as new-repo evidence. Human needed: none;
+  handoff to PM for the recorded convention conflict.

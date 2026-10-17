@@ -2,5 +2,5 @@
 # its allow rules as repository-supplied and holds them until trust.
 .claude/settings.local.json
 
-# Test binaries (go build -o bin/huddle-v3 ./cmd/huddle).
+# Test binaries (go build -o ./bin/huddle-v4 ./cmd/huddle).
 /bin/

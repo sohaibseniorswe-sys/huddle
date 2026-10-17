@@ -132,29 +132,17 @@ func FetchFacts(ctx context.Context, c Client, repo, milestone string) (Facts, e
 }
 
 func (c CLI) MilestoneIssues(ctx context.Context, repo, milestone string) ([]IssueState, error) {
-	out, err := c.run(ctx, "issue", "list", "--repo", repo, "--milestone", milestone, "--state", "all",
-		"--json", "number,title,state,labels,body", "--limit", "1000")
+	all, err := c.ListIssues(ctx, repo, "all")
 	if err != nil {
 		return nil, err
 	}
-	var raw []struct {
-		Number int
-		Title  string
-		State  string
-		Labels []struct{ Name string }
-		Body   string
-	}
-	if err := json.Unmarshal(out, &raw); err != nil {
-		return nil, fmt.Errorf("parse gh issue list output: %w", err)
-	}
-	issues := make([]IssueState, len(raw))
-	for i, r := range raw {
-		issues[i] = IssueState{Number: r.Number, Title: r.Title, Closed: strings.EqualFold(r.State, "closed"), Body: r.Body}
-		for _, l := range r.Labels {
-			issues[i].Labels = append(issues[i].Labels, l.Name)
+	var issues []IssueState
+	for _, is := range all {
+		if is.Milestone == milestone {
+			issues = append(issues, IssueState{Number: is.Number, Title: is.Title, Closed: is.Closed, Labels: is.Labels, Body: is.Body})
 		}
 	}
-	// gh lists newest first; the milestone reads better oldest first.
+	// The callers expect oldest first, independent of the repository listing.
 	slices.SortFunc(issues, func(a, b IssueState) int { return a.Number - b.Number })
 	return issues, nil
 }
