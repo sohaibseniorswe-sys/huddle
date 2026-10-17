@@ -51,6 +51,7 @@ var version = "0.1.0-dev"
 
 // deps holds everything run touches outside the process, so tests can fake it.
 type deps struct {
+	runRepair   func(context.Context, store.Project) (start.PathRepair, error)
 	runProjects func(context.Context, []store.Project) (start.ProjectChoice, error)
 	runDone     func(context.Context, store.Project) (bool, error)
 	stdin       io.Reader
@@ -84,6 +85,7 @@ func main() {
 	os.Exit(run(ctx, os.Args[1:], deps{
 		stdin:       os.Stdin,
 		runProjects: start.PickProject,
+		runRepair:   start.Relocate,
 		runDone:     start.ChooseDone,
 		stdout:      os.Stdout,
 		stderr:      os.Stderr,
@@ -103,6 +105,7 @@ func main() {
 }
 
 type options struct {
+	pruneDraft bool
 	project    string
 	list       bool
 	newProject bool
@@ -136,6 +139,7 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fs.BoolVar(&o.plain, "plain", false, "print plain lines to stdout instead of the full-screen UI (as v1 did)")
 	fs.StringVar(&o.repo, "repo", "", "open a repo as owner/name (legacy direct entry)")
 	fs.StringVar(&o.project, "project", "", "open a registry project by internal id")
+	fs.BoolVar(&o.pruneDraft, "prune-draft", false, "remove the selected project’s abandoned draft")
 	fs.BoolVar(&o.list, "list", false, "list registry projects without network calls")
 	fs.BoolVar(&o.newProject, "new", false, "start an unnamed planning project")
 	// The default 0 is never used (autonomySet says whether the flag was
@@ -192,6 +196,9 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	}
 	if modes > 1 {
 		return o, errors.New("use only one of --resume, --run and --plan")
+	}
+	if o.pruneDraft && (o.project == "" || o.newProject || o.repo != "") {
+		return o, errors.New("--prune-draft requires --project <id>")
 	}
 	if o.plain && (o.plan || o.runTitle != "") {
 		return o, errors.New("--plan and --run need the run screen; leave out --plain")
@@ -280,6 +287,36 @@ func run(ctx context.Context, args []string, d deps) int {
 		} else {
 			return 0
 		}
+		if opts.pruneDraft {
+			if err := st.PruneDraft(ctx, selected.ID); err != nil {
+				return fail(err)
+			}
+			return 0
+		}
+		stale, err := start.StalePath(*selected)
+		if err != nil {
+			return fail(err)
+		}
+		if stale {
+			if d.runRepair == nil {
+				return fail(fmt.Errorf("stale directory %s: relocate or drop the project", selected.Dir))
+			}
+			repair, err := d.runRepair(ctx, *selected)
+			if errors.Is(err, context.Canceled) {
+				return 0
+			}
+			if err != nil {
+				return fail(err)
+			}
+			repaired, err := start.Repair(ctx, st, *selected, repair)
+			if err != nil {
+				return fail(err)
+			}
+			if repaired.Archived {
+				return 0
+			}
+			selected = &repaired
+		}
 		p, err := lifecycle.Refresh(ctx, d.gh, st, *selected)
 		if err != nil {
 			return fail(err)
@@ -338,6 +375,9 @@ func run(ctx context.Context, args []string, d deps) int {
 	}
 	settingsPath := tildePath(config.Path(home, target), d.lookupEnv)
 	cfg, exists, err := config.Load(home, target)
+	if selected != nil && selected.Dir != "" {
+		cfg.Dir = selected.Dir
+	}
 	if err != nil {
 		return fail(err)
 	}

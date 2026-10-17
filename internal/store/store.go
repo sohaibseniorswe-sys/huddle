@@ -300,3 +300,18 @@ func (s Store) Migrate(ctx context.Context) error {
 	}
 	return nil
 }
+
+// PruneDraft removes an abandoned planning draft, retaining project identity and
+// config. Only the explicitly selected project's draft can be removed.
+func (s Store) PruneDraft(ctx context.Context, id string) error {
+	if !validID.MatchString(id) {
+		return fmt.Errorf("invalid project id %q", id)
+	}
+	if _, err := s.Read(id); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(filepath.Join(s.Data(), "drafts", id)); err != nil {
+		return err
+	}
+	return s.Checkpoint(ctx, "Prune abandoned draft "+id)
+}

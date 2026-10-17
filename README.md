@@ -439,3 +439,12 @@ reconcile a build, or plan next/archive a completed project. `--list` prints the
 same local listing, `--project <id>` opens an entry, and `--new` creates an unnamed
 planning identity. `--repo owner/name` remains the generic direct entry for v3
 workflows; there is no built-in project or repository default.
+
+When a registry checkout has moved or disappeared, Huddle offers relocation or
+removal from the listing before starting agents. Relocation preserves project
+identity and the normal remote check verifies the replacement. Abandoned plans
+remain listed and resumable; `--project <id> --prune-draft` deletes that project's
+draft while preserving its settings and registry identity. At startup Huddle asks
+before reopening an unfinished closed control (`--yes` accepts); the running loop
+reopens it automatically. Existing done rules still apply: `state:done` ends a
+run, as does a closed control with no remaining open milestone work.
