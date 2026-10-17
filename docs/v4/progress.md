@@ -108,8 +108,8 @@ One entry per issue: start/finish time, what was built, deviations from the spec
   Real binary/loop/GitHub with scripted agents: PM X held running, second build
   refused, companion Y answered with read-only args (`--setting-sources user`),
   usage warning fired, then PM X handed off normally. Fixture cleanup completed.
-- Validation: full Go tests, vet, v4 binary build, targeted race tests and Windows
-  cross-compile. The temporary cross-compile artifact was discarded and the
+- Validation: full Go tests, vet, v4 binary build and Windows cross-compile.
+  Race checks could not run: CGO is disabled and this image has no C compiler. The temporary cross-compile artifact was discarded and the
   canonical Linux test binary remains `./bin/huddle-v4`.
 - Technical choice: locks are per state root to preserve deliberate instance
   isolation; metadata alone never establishes liveness.
