@@ -68,3 +68,28 @@ One entry per issue: start/finish time, what was built, deviations from the spec
 - Assumption: explicit state:done retains the pre-existing done-rule precedence;
   closing without done requires all milestone work closed, otherwise reopening.
 - Deviations: none. Human needed: none.
+
+## v4.05 — #17 fresh issue sessions
+
+- Start: 2026-10-16 20:35 EDT. Finish: 2026-10-16 20:39 EDT.
+- Built: v4 per-issue prompt boundary, fresh Dev/PM turn sessions, durable-source
+  reload instructions, and persisted building/start state before each turn.
+  Same-role Dev-ready continues autonomous work in a new process; usage retries
+  within a turn retain the current issue session. Legacy direct-entry v3 policy
+  remains unchanged.
+- Evidence: unit tests for repeated same-role boundaries, stale saved session IDs,
+  PM freshness and usage retry. REAL multi-issue sandbox run (scripted agents):
+  https://github.com/sohaibseniorswe-sys/huddle-sandbox/issues/47
+  `HUDDLE_V4_SANDBOX=1 go test ./internal/integration -run TestSandboxFreshIssueSessions -v`.
+  Separate Claude PM/Codex Dev processes reloaded control+comments, issue list,
+  agent files, Session.md and git history before closing their fixture issues.
+  Args contain neither `resume` nor `--resume`; roots/clones are temporary and
+  cleanup closes all fixture issues/milestone. Full tests, vet and build pass.
+- Before/after context note: previously a saved role session carried all earlier
+  issue transcripts; v4 boundary args pass zero prior-session transcript, only
+  the fixed launch prompt plus freshly read durable sources. This is structural
+  context isolation, not a model-token benchmark.
+- Technical choice: one implementation issue per Dev turn; same-role ready is a
+  session boundary rather than a mandatory PM review. Agent CLIs were scripted
+  in sandbox evidence; the process runner/GitHub/loop were real.
+- Deviations: none. Human needed: none.

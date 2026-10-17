@@ -181,3 +181,20 @@ func TestPrinciplesNameRolesNotTools(t *testing.T) {
 		t.Errorf("Launch(Dev, Claude Code) does not say who plays the Dev:\n%s", got)
 	}
 }
+
+func TestIssueBoundaryPreservesAutonomy(t *testing.T) {
+	for _, role := range []Role{Dev, PM} {
+		prompt, err := IssueLaunch(role, "Codex", "M", 3, 8)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{"ALL comments", "Session.md", "git history", "fresh session"} {
+			if !strings.Contains(prompt, want) {
+				t.Fatalf("missing %q", want)
+			}
+		}
+		if role == Dev && (!strings.Contains(prompt, "at most ONE") || !strings.Contains(prompt, "state:dev-ready")) {
+			t.Fatal("no per-issue boundary")
+		}
+	}
+}

@@ -448,3 +448,10 @@ draft while preserving its settings and registry identity. At startup Huddle ask
 before reopening an unfinished closed control (`--yes` accepts); the running loop
 reopens it automatically. Existing done rules still apply: `state:done` ends a
 run, as does a closed control with no remaining open milestone work.
+
+V4 registry builds use a fresh Dev session per implementation issue and a fresh
+session for each PM turn. At autonomous levels, a Dev with more independent work
+posts its durable handoff and sets `state:dev-ready` for the next fresh Dev
+session. Each process reloads control history, issue specs, `Session.md`, and git
+history. Usage-limit retries within the same issue can resume that issue's
+session. Explicit legacy `--repo` entry keeps the v3 session policy.

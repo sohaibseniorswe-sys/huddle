@@ -986,3 +986,55 @@ func TestOnlyTheControlIssueOpenIsNotDone(t *testing.T) {
 		t.Errorf("calls = %+v, want the Dev and then the PM, who sets state:done", e.agents.calls)
 	}
 }
+
+func TestFreshIssueSessionsAcrossSameRoleTurns(t *testing.T) {
+	e := newEnv(t, gh.StateDevReady)
+	e.loop.FreshSessions = true
+	if err := e.sessions.Save(session.Dev, "prior-issue"); err != nil {
+		t.Fatal(err)
+	}
+	e.agents.steps = []func(context.Context, call) Result{
+		func(_ context.Context, c call) Result {
+			e.agentComments("Status: Progress\nDone: #1\nNext: #2")
+			e.agentSets(gh.StateDevReady)
+			return Result{SessionID: "issue-one"}
+		},
+		func(_ context.Context, c call) Result {
+			e.agentComments("Status: Completed\nDone: #2")
+			e.agentSets(gh.StatePMReady)
+			return Result{SessionID: "issue-two"}
+		},
+		e.sets(gh.StateDone, "pm-review"),
+	}
+	if code := e.run(); code != ExitOK {
+		t.Fatal(code)
+	}
+	if len(e.agents.calls) != 3 {
+		t.Fatalf("calls %+v", e.agents.calls)
+	}
+	for _, c := range e.agents.calls {
+		if c.sessionID != "" {
+			t.Fatalf("transcript leaked: %+v", c)
+		}
+		if !strings.Contains(c.prompt, "V4 SESSION BOUNDARY") || !strings.Contains(c.prompt, "ALL comments") {
+			t.Fatal("durable reload absent")
+		}
+	}
+}
+
+func TestFreshIssueUsageRetryKeepsCurrentSession(t *testing.T) {
+	e := newEnv(t, gh.StateDevReady)
+	e.loop.FreshSessions = true
+	e.agents.steps = []func(context.Context, call) Result{
+		func(_ context.Context, c call) Result {
+			return Result{ExitCode: 1, SessionID: "current-issue", Output: "You've hit your usage limit. Try again later."}
+		},
+		e.sets(gh.StateDone, "current-issue"),
+	}
+	if code := e.run(); code != ExitOK {
+		t.Fatal(code)
+	}
+	if len(e.agents.calls) != 2 || e.agents.calls[0].sessionID != "" || e.agents.calls[1].sessionID != "current-issue" {
+		t.Fatalf("calls %+v", e.agents.calls)
+	}
+}
