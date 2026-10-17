@@ -25,7 +25,7 @@ func startSandboxBuild(t *testing.T, ctx context.Context, s store.Store, id stri
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Default(sandbox)
+	cfg := config.Default(r.Repo)
 	cfg.Dir = p.Dir
 	if err := config.SaveID(s.Root, id, cfg); err != nil {
 		t.Fatal(err)
@@ -75,7 +75,7 @@ claude)
  echo '{"type":"result","subtype":"success","session_id":"lifecycle-pm","result":"Sandbox lifecycle completed."}'
  ;;
 esac
-`, argsPath, r.Control, sandbox, slug, work, sandbox, r.Control, sandbox, started, release, r.Control, sandbox, r.Control, sandbox, r.Control, sandbox)
+`, argsPath, r.Control, r.Repo, slug, work, r.Repo, r.Control, r.Repo, started, release, r.Control, r.Repo, r.Control, r.Repo, r.Control, r.Repo)
 	for _, name := range []string{"codex", "claude"} {
 		if err := os.WriteFile(filepath.Join(bins, name), []byte(script), 0700); err != nil {
 			t.Fatal(err)

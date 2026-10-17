@@ -1,9 +1,7 @@
 # Operating v4
 
 V4 uses a managed-project registry, portable Huddle-owned planning/config storage,
-and runtime truth from each project's GitHub control issue. The full milestone
-remains open: #21 needs the convention decision described below, and #24's final
-from-scratch acceptance depends on it.
+and runtime truth from each project's GitHub control issue.
 
 ## Build and isolate
 
@@ -16,7 +14,8 @@ go build -o ./bin/huddle-v4 ./cmd/huddle
 `--home` wins over `HUDDLE_HOME`; otherwise the default is `$HOME/.huddle`.
 All state lives below that root. Test binaries use `./bin/huddle-v4`; never use
 `go install` over the frozen production binary. Real acceptance runs use only
-huddle-sandbox and isolated roots.
+huddle-sandbox and isolated roots. The #21 acceptance exception permits one private
+`huddle-sandbox-new-<YYYYMMDD-HHMM>` repository, archived after the run.
 
 The root contains `huddle-data/` (Git registry/config/drafts), local logs,
 sessions, queues and OS lock files. Config/registry changes are committed
@@ -38,10 +37,21 @@ GitHub remote, falling back to the directory when there is no remote. Adoption
 checks GitHub and saves planning input; it makes no GitHub writes.
 
 `--new` creates a planning identity without a name, directory or repo. It persists
-and resumes. The later directory/repository creation flow is **not complete**:
-#21 asks the PM to reconcile sandbox-only acceptance runs and project Git
-ownership with the required new-checkout/new-repo walkthrough. No extra test repo
-has been created by silently overriding those conventions.
+and resumes. Decide the name, absolute directory, GitHub owner/repo and working
+branch with the companion. Its draft includes a `project` object containing
+`name`, `dir`, `repo` and `branch`. The chosen name appears in the registry;
+saving the proposal creates no directory or repository. `/publish` reviews the
+full destination and package before Agree authorizes creation of a **private**
+repository. Huddle creates the directory, initializes the remote through gh/API,
+and performs a one-time bootstrap clone before publishing the first milestone.
+The directory must be new; an existing repository is accepted only as recovery
+of this identity's journaled setup and must retain its private ownership marker.
+
+Setup intent, destination and completed publish steps survive interruption.
+Reopen the same project id, review and approve again to retry; completed steps
+are reused. A partially started setup cannot be redirected to a second repo.
+Repair the original destination/error and resume its proposal. Subsequent
+milestones omit the creation object and use the existing registry destination.
 
 ## Draft, review, publish
 
@@ -62,7 +72,8 @@ superseded issues, and creates one clean dev-ready control. Steps are journaled
 for retry. A changed package/destination requires fresh approval.
 
 The resulting project is published; publishing does not implicitly start a
-build. Reopen and choose Start. Project checkout Git operations remain agent-owned;
+build. Reopen and choose Start. After the new-project bootstrap clone, project
+checkout Git operations remain agent-owned;
 approved publishing writes spec commits through GitHub's Git Data API.
 
 ## Build and plan next

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -82,5 +83,41 @@ func TestPublishCardRequiresApprovalAndDoesNotStartBuild(t *testing.T) {
 	p, err := s.Read("publish")
 	if err != nil || p.Phase != "published" || p.Control == 0 {
 		t.Fatalf("approved publish %+v %v", p, err)
+	}
+}
+
+func TestNewProjectReviewShowsCreationWithoutSideEffects(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	s, err := store.Open(ctx, t.TempDir(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Put(ctx, store.Project{ID: "new-project", Phase: "planning"}); err != nil {
+		t.Fatal(err)
+	}
+	w := planning.Workspace{Store: s, ProjectID: "new-project"}
+	f.m.cfg.Draft = &w
+	b, err := os.ReadFile("../planning/testdata/good.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d, err := planning.Parse(string(b))
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.Project = &planning.NewProject{Name: "Named project", Dir: filepath.Join(t.TempDir(), "new"), Repo: "owner/new", Branch: "main"}
+	if err := w.Save(ctx, d); err != nil {
+		t.Fatal(err)
+	}
+	f.keys("/publish", "enter")
+	if f.m.card.kind != cardPlan || !strings.Contains(f.m.card.target, "PRIVATE") || !strings.Contains(f.m.card.target, d.Project.Dir) || !strings.Contains(f.m.planText, "Named project") {
+		t.Fatalf("missing creation review: %+v %s", f.m.card, f.m.planText)
+	}
+	if len(f.gh.Log) != 0 {
+		t.Fatal("review wrote GitHub")
+	}
+	if _, err := os.Stat(d.Project.Dir); !os.IsNotExist(err) {
+		t.Fatal("review created directory")
 	}
 }

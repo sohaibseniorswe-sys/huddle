@@ -71,6 +71,12 @@ func Review(w planning.Workspace) (Preview, error) {
 	if err != nil {
 		return Preview{}, err
 	}
+	if d.Project != nil {
+		if err := validateNewProject(*d.Project, p); err != nil {
+			return Preview{}, err
+		}
+		p.Name, p.Dir, p.Repo, p.Branch = d.Project.Name, d.Project.Dir, d.Project.Repo, d.Project.Branch
+	}
 	if err := checks.ValidateRepo(p.Repo); err != nil {
 		return Preview{}, fmt.Errorf("choose a repository before publishing: %w", err)
 	}
@@ -137,6 +143,11 @@ func Publish(ctx context.Context, c gh.Client, w planning.Workspace, a Approval)
 	if !a.Confirmed || a.Revision == "" || a.Revision != preview.Revision {
 		return Result{}, fmt.Errorf("explicit approval of the current draft and destination is required")
 	}
+	projectLock, err := filelock.Wait(ctx, filepath.Join(w.Store.Root, "publish-project-"+w.ProjectID+".lock"))
+	if err != nil {
+		return Result{}, err
+	}
+	defer projectLock.Close()
 	lock, err := filelock.Wait(ctx, filepath.Join(w.Store.Root, "publish-"+store.RepoID(preview.Project.Repo)+".lock"))
 	if err != nil {
 		return Result{}, err
@@ -169,6 +180,11 @@ func Publish(ctx context.Context, c gh.Client, w planning.Workspace, a Approval)
 	}
 	if j.Complete {
 		return j.Result, nil
+	}
+	if d.Project != nil {
+		if err := provision(ctx, c, w, p); err != nil {
+			return j.Result, err
+		}
 	}
 	if err := Gate(ctx, c, p.Repo, j.Result.Control); err != nil {
 		return j.Result, err
@@ -287,6 +303,17 @@ func Publish(ctx context.Context, c gh.Client, w planning.Workspace, a Approval)
 // GateReview permits the exact journaled control on a publish retry, while
 // retaining the ordinary active-control refusal for every other package.
 func GateReview(ctx context.Context, c gh.Client, w planning.Workspace, p Preview) error {
+	// A new repository does not exist yet. Provisioning verifies ownership and
+	// the ordinary gate runs after creation, before milestone/spec writes.
+	if p.Draft.Project != nil {
+		original, err := w.Store.Read(w.ProjectID)
+		if err != nil {
+			return err
+		}
+		if original.Repo == "" {
+			return nil
+		}
+	}
 	own := 0
 	path := filepath.Join(w.Dir(), "publish-"+p.Revision+".json")
 	data, err := os.ReadFile(path)

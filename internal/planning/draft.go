@@ -29,12 +29,22 @@ func Instructions(milestone string) string {
 	return base + "\n\nDraft one milestone at a time. Use <draft> blocks instead of <plan> blocks. Huddle saves drafts locally; saving never publishes.\n\n" + Standard
 }
 
+// NewProject is a proposed destination, created only by approved publishing.
+// Paths are absolute so a resumed session cannot reinterpret the destination.
+type NewProject struct {
+	Name   string `json:"name"`
+	Dir    string `json:"dir"`
+	Repo   string `json:"repo"`
+	Branch string `json:"branch"`
+}
+
 // Draft is one unpublished milestone's portable spec package.
 type Draft struct {
-	Title  string  `json:"title"`
-	Slug   string  `json:"slug"`
-	README string  `json:"readme"`
-	Issues []Issue `json:"issues"`
+	Project *NewProject `json:"project,omitempty"`
+	Title   string      `json:"title"`
+	Slug    string      `json:"slug"`
+	README  string      `json:"readme"`
+	Issues  []Issue     `json:"issues"`
 }
 
 // Issue carries product requirements, evidence and dependencies, not workflow.
@@ -281,6 +291,18 @@ func (w Workspace) Save(ctx context.Context, d Draft) error {
 			}
 		}
 	}
+	if d.Project != nil && strings.TrimSpace(d.Project.Name) != "" {
+		p, err := w.Store.Read(w.ProjectID)
+		if err != nil {
+			return err
+		}
+		if p.Repo == "" && p.Name != d.Project.Name {
+			p.Name = d.Project.Name
+			if err := w.Store.Put(ctx, p); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -307,6 +329,13 @@ func (w Workspace) Context() (string, error) {
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "PLANNING PROJECT %s\n", w.ProjectID)
+	p, err := w.Store.Read(w.ProjectID)
+	if err != nil {
+		return "", err
+	}
+	if p.Repo == "" {
+		b.WriteString("This is a new project with no repository. Decide its name, absolute directory, owner/repo and working branch with the human. Include these as the draft project object. Publishing will create a PRIVATE repository and bootstrap its checkout only after approval. Never create them yourself.\n")
+	}
 	if exists {
 		data, err := json.Marshal(d)
 		if err != nil {
@@ -343,6 +372,9 @@ func (w Workspace) Context() (string, error) {
 // Text is the full reviewable package, including its exact markdown content.
 func (d Draft) Text() string {
 	var b strings.Builder
+	if d.Project != nil {
+		fmt.Fprintf(&b, "Create private project: %s\nDirectory: %s\nRepository: %s\nBranch: %s\nBootstrap: one-time clone before publishing\n\n", d.Project.Name, d.Project.Dir, d.Project.Repo, d.Project.Branch)
+	}
 	fmt.Fprintf(&b, "%s\n\n%s\n", d.Title, d.README)
 	for _, is := range d.Issues {
 		fmt.Fprintf(&b, "\n--- %s (%s) ---\n%s\n", is.Title, is.ID, is.Text)

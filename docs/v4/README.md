@@ -14,7 +14,7 @@ Two memories, split by ownership.
 
 **Rule:** planning drafts live in `huddle-data` until published; building (runtime) state lives in the project repo; config lives in `huddle-data`. On open, Huddle trusts the project repo for runtime state and `huddle-data` for everything the project repo can't hold. The registry caches a last-known phase but re-reads the control issue on open.
 
-Huddle managing its own `huddle-data` repo does **not** break "Huddle never runs git itself" — that invariant is about *project* repos, which the agents own. `huddle-data` is Huddle's own store.
+Huddle managing its own `huddle-data` repo does **not** break "Huddle never runs git itself" — that invariant is about *project* repos, which the agents own. `huddle-data` is Huddle's own store. The sole project-Git exception is a one-time bootstrap clone of a newly created private repository into its newly approved directory, before the first milestone is published (issue 09). After bootstrap, agents own all project Git work.
 
 ## 2. Project identity
 
