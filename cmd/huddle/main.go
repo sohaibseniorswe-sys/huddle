@@ -158,7 +158,7 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fs.StringVar(&o.runTitle, "run", "", "run the open milestone with this title without showing the start menu")
 	fs.BoolVar(&o.plan, "plan", false, "plan new milestones with the companion without showing the start menu")
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, "Usage: huddle [flags]\n       huddle [flags] setup\n\nRun from inside a local clone of the target repo.\nWithout --resume, --run or --plan, Huddle opens on the start menu.\n`huddle setup` runs the setup wizard again.\n\nFlags:\n")
+		fmt.Fprintf(stderr, "Usage: huddle [flags]\n       huddle [flags] setup\n\nWithout target flags, Huddle opens the managed-project picker.\nUse --adopt in an existing checkout or --project <id> to open an entry.\n--repo owner/name preserves the explicit legacy start menu.\n`huddle setup` runs the setup wizard again.\n\nFlags:\n")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -204,7 +204,7 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 		}
 	}
 	if modes > 1 {
-		return o, errors.New("use only one of --resume, --run and --plan")
+		return o, errors.New("use only one of --resume, --run, --plan and --plan-next")
 	}
 	if o.repo != "" && (o.project != "" || o.newProject) {
 		return o, errors.New("choose one of --repo, --project and --new")
@@ -224,8 +224,8 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	if o.pruneDraft && (o.project == "" || o.newProject || o.repo != "") {
 		return o, errors.New("--prune-draft requires --project <id>")
 	}
-	if o.plain && (o.plan || o.planNext || o.runTitle != "") {
-		return o, errors.New("--plan and --run need the run screen; leave out --plain")
+	if o.plain && (o.plan || o.planNext || o.adopt || o.newProject || o.runTitle != "") {
+		return o, errors.New("planning and --run need the run screen; leave out --plain")
 	}
 	return o, nil
 }
@@ -376,6 +376,10 @@ func run(ctx context.Context, args []string, d deps) int {
 		case start.RouteResume:
 			opts.resume = true
 		case start.RouteDone:
+			if opts.plain {
+				fmt.Fprintln(d.stdout, "Project is done; use --plan-next or open the picker to archive it")
+				return 0
+			}
 			if d.runDone == nil {
 				return fail(errors.New("done project: choose plan next or archive"))
 			}
@@ -402,6 +406,10 @@ func run(ctx context.Context, args []string, d deps) int {
 	}
 	// Planning never prepares project files/labels or checks build-agent logins.
 	if selected != nil && opts.plan {
+		if opts.plain {
+			fmt.Fprintln(d.stderr, "Planning needs the run screen; leave out --plain")
+			return 2
+		}
 		w := planning.Workspace{Store: st, ProjectID: selected.ID}
 		if selected.Phase == "done" || selected.Phase == "building" {
 			started, err := onboarding.BeginNext(ctx, w)
@@ -422,6 +430,9 @@ func run(ctx context.Context, args []string, d deps) int {
 			if err := config.SaveID(home, selected.ID, cfg); err != nil {
 				return fail(err)
 			}
+		}
+		if opts.autonomySet {
+			cfg.Autonomy = opts.autonomy
 		}
 		if err := cfg.Validate(); err != nil {
 			return fail(err)

@@ -20,10 +20,12 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/store"
 )
 
-func TestSandboxPublish(t *testing.T)    { sandboxPublish(t, false) }
-func TestSandboxOnboarding(t *testing.T) { sandboxPublish(t, true) }
+func TestSandboxPublish(t *testing.T)    { sandboxPublish(t, false, false) }
+func TestSandboxOnboarding(t *testing.T) { sandboxPublish(t, true, false) }
 
-func sandboxPublish(t *testing.T, onboard bool) {
+func TestSandboxLifecycleFromAdoptedProject(t *testing.T) { sandboxPublish(t, true, true) }
+
+func sandboxPublish(t *testing.T, onboard, build bool) {
 	if os.Getenv("HUDDLE_V4_SANDBOX") != "1" {
 		t.Skip("set HUDDLE_V4_SANDBOX=1 to publish a throwaway sandbox milestone")
 	}
@@ -86,7 +88,9 @@ func sandboxPublish(t *testing.T, onboard bool) {
 		w.ProjectID = p.ID
 		adoptionContext, err := w.Context()
 		if err != nil || !strings.Contains(adoptionContext, fmt.Sprint(old)) || !strings.Contains(adoptionContext, "\"respec\": true") {
-			t.Fatalf("missing adoption source: %s %v", adoptionContext, err)
+			oldView, _ := client.IssueView(ctx, sandbox, old)
+			listed, _ := client.ListIssues(ctx, sandbox, "open")
+			t.Fatalf("missing adoption source: %s %v; project=%+v old=%+v listed=%+v", adoptionContext, err, p, oldView, listed)
 		}
 	}
 	d.Issues[0].Supersedes = []int{old}
@@ -161,10 +165,16 @@ func sandboxPublish(t *testing.T, onboard bool) {
 	if err != nil || len(comments) == 0 || !strings.Contains(comments[len(comments)-1].Body, fmt.Sprintf("/issues/%d", result.Issues[d.Issues[0].ID])) {
 		t.Fatal("missing adoption link")
 	}
+	var finishBuild func()
 	if onboard {
+		if build {
+			finishBuild = startSandboxBuild(t, ctx, s, w.ProjectID, result, preview.Draft.Slug)
+		}
 		c := gh.Control{Client: client, Repo: sandbox, Number: result.Control}
-		if err := c.SetState(ctx, gh.StatePMWorking); err != nil {
-			t.Fatal(err)
+		if !build {
+			if err := c.SetState(ctx, gh.StatePMWorking); err != nil {
+				t.Fatal(err)
+			}
 		}
 		p, err := s.Read(w.ProjectID)
 		if err != nil {
@@ -198,6 +208,9 @@ func sandboxPublish(t *testing.T, onboard bool) {
 		t.Fatal("gated publish changed branch")
 	}
 	if onboard {
+		if finishBuild != nil {
+			finishBuild()
+		}
 		for _, n := range result.Issues {
 			if err := client.CloseIssue(ctx, sandbox, n, "Sandbox acceptance verified."); err != nil {
 				t.Fatal(err)
@@ -227,6 +240,24 @@ func sandboxPublish(t *testing.T, onboard bool) {
 		t.Cleanup(func() { cleanupPublished(t, nextResult) })
 		if err != nil {
 			t.Fatal(err)
+		}
+		if build {
+			// Clone the committed store into a fresh root and list through the real CLI.
+			if err := s.Put(ctx, store.Project{ID: "fresh-planning", Name: "Untitled fresh project", Phase: "planning", Status: "PLANNED"}); err != nil {
+				t.Fatal(err)
+			}
+			binary, err := filepath.Abs("../../bin/huddle-v4")
+			if err != nil {
+				t.Fatal(err)
+			}
+			freshRoot := t.TempDir()
+			cmd := exec.CommandContext(ctx, binary, "--home", freshRoot, "--data-remote", s.Data(), "--list")
+			cmd.Env = append(os.Environ(), "HUDDLE_HOME="+freshRoot)
+			listed, err := cmd.CombinedOutput()
+			if err != nil || !strings.Contains(string(listed), w.ProjectID) || !strings.Contains(string(listed), "fresh-planning") || !strings.Contains(string(listed), "PLANNED") {
+				t.Fatalf("fresh-machine listing: %s %v", listed, err)
+			}
+			t.Logf("REAL fresh-machine clone → list:\n%s", listed)
 		}
 		t.Logf("REAL onboarding: remote adopted into stable id %s; normalized issue #%d; N+1 drafted while PM-working and gated; done-project entry resumed N+1; then published control https://github.com/%s/issues/%d.", w.ProjectID, old, sandbox, nextResult.Control)
 	}

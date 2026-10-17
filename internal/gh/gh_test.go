@@ -49,3 +49,15 @@ func TestParseComments(t *testing.T) {
 		t.Errorf("parseComments(empty) = %v, %v", got, err)
 	}
 }
+
+func TestIssuePaginationDoesNotLoseOldControlsOrIncludePRs(t *testing.T) {
+	data := []byte(`[{"number":202,"title":"new","state":"open"},{"number":201,"pull_request":{"url":"pr"},"state":"open"}]
+[{"number":1,"title":"old control","body":"<!-- huddle:control -->","labels":[{"name":"state:dev-ready"}],"state":"open"}]`)
+	issues, err := parseIssues(data)
+	if err != nil || len(issues) != 2 || issues[1].Number != 1 || !IsControl(issues[1].Labels, issues[1].Body) {
+		t.Fatalf("paginated issues %+v %v", issues, err)
+	}
+	if _, err := parseIssues([]byte(`[] invalid`)); err == nil {
+		t.Fatal("ignored malformed later page")
+	}
+}

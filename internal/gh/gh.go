@@ -54,7 +54,7 @@ type Client interface {
 	ListLabels(ctx context.Context, repo string) ([]string, error)
 	// CreateLabel creates a label on repo.
 	CreateLabel(ctx context.Context, repo string, l Label) error
-	// ListIssues returns repo's issues in state ("open" or "closed"),
+	// ListIssues returns all repo issues in state ("open", "closed" or "all"),
 	// newest first, with their bodies.
 	ListIssues(ctx context.Context, repo, state string) ([]Issue, error)
 	// ReopenIssue reopens the closed issue number.
@@ -159,14 +159,26 @@ func (c CLI) CreateLabel(ctx context.Context, repo string, l Label) error {
 	return err
 }
 
-// listLimit is how many issues ListIssues reads: plenty for the open
-// issues of a private repo, and the newest closed ones are the ones that
-// matter.
-const listLimit = "200"
-
+// ListIssues reads all GraphQL pages rather than truncating at 200 issues.
+// It retains the same fresh GraphQL issue connection as gh issue list and never
+// includes pull requests. State values are fixed enums, not query interpolation.
 func (c CLI) ListIssues(ctx context.Context, repo, state string) ([]Issue, error) {
-	out, err := c.run(ctx, "issue", "list", "--repo", repo, "--state", state,
-		"--json", "number,title,milestone,labels,body,state", "--limit", listLimit)
+	states := "OPEN,CLOSED"
+	switch state {
+	case "open":
+		states = "OPEN"
+	case "closed":
+		states = "CLOSED"
+	case "all":
+	default:
+		return nil, fmt.Errorf("invalid issue state %q", state)
+	}
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return nil, fmt.Errorf("invalid repository %q", repo)
+	}
+	query := `query($owner:String!,$name:String!,$endCursor:String){repository(owner:$owner,name:$name){issues(first:100,after:$endCursor,states:[` + states + `],orderBy:{field:CREATED_AT,direction:DESC}){pageInfo{hasNextPage endCursor}nodes{number title body state milestone{title} labels(first:100){nodes{name}}}}}}`
+	out, err := c.run(ctx, "api", "graphql", "--paginate", "-F", "owner="+parts[0], "-F", "name="+parts[1], "-f", "query="+query, "--jq", `.data.repository.issues.nodes | map({number,title,body,state,milestone,labels:.labels.nodes})`)
 	if err != nil {
 		return nil, err
 	}
@@ -252,25 +264,33 @@ func parseComments(data []byte) ([]Comment, error) {
 }
 
 func parseIssues(data []byte) ([]Issue, error) {
-	var raw []struct {
-		Number    int
-		Title     string
-		Milestone *struct{ Title string }
-		Labels    []struct{ Name string }
-		Body      string
-		State     string
-	}
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("parse gh issue list output: %w", err)
-	}
-	issues := make([]Issue, len(raw))
-	for i, r := range raw {
-		issues[i] = Issue{Number: r.Number, Title: r.Title, Body: r.Body, Closed: strings.EqualFold(r.State, "closed")}
-		if r.Milestone != nil {
-			issues[i].Milestone = r.Milestone.Title
+	dec := json.NewDecoder(bytes.NewReader(data))
+	var issues []Issue
+	for dec.More() {
+		var page []struct {
+			Number      int
+			Title       string
+			Milestone   *struct{ Title string }
+			Labels      []struct{ Name string }
+			Body        string
+			State       string
+			PullRequest json.RawMessage `json:"pull_request"`
 		}
-		for _, l := range r.Labels {
-			issues[i].Labels = append(issues[i].Labels, l.Name)
+		if err := dec.Decode(&page); err != nil {
+			return nil, fmt.Errorf("parse paginated issues: %w", err)
+		}
+		for _, r := range page {
+			if len(r.PullRequest) > 0 && string(r.PullRequest) != "null" {
+				continue
+			}
+			is := Issue{Number: r.Number, Title: r.Title, Body: r.Body, Closed: strings.EqualFold(r.State, "closed")}
+			if r.Milestone != nil {
+				is.Milestone = r.Milestone.Title
+			}
+			for _, label := range r.Labels {
+				is.Labels = append(is.Labels, label.Name)
+			}
+			issues = append(issues, is)
 		}
 	}
 	return issues, nil

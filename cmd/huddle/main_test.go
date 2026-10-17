@@ -738,7 +738,7 @@ func TestStartFlags(t *testing.T) {
 		wantCode int
 		wantErr  string
 	}{
-		{"two modes", []string{"--resume", "--plan"}, 2, "only one of --resume, --run and --plan"},
+		{"two modes", []string{"--resume", "--plan"}, 2, "only one of --resume, --run, --plan and --plan-next"},
 		{"plan needs the screen", []string{"--plan", "--plain"}, 2, "need the run screen"},
 		{"nothing to resume", []string{"--resume"}, 1, "--resume: no open control issue"},
 		{"unknown milestone", []string{"--run", "M9"}, 1, `--run: ` + sandbox + ` has no open milestone titled "M9"`},
@@ -857,5 +857,21 @@ func TestPlanWhileBuildingUsesCompanionLaneWithoutWrites(t *testing.T) {
 	cached, err := s.Read(p.ID)
 	if err != nil || cached.Phase != "building" || cached.Control != 3 {
 		t.Fatalf("runtime changed %+v %v", cached, err)
+	}
+}
+
+func TestRegistryPlanningHonorsRunAutonomyWithoutSavingOverride(t *testing.T) {
+	d, _, errout := testDeps(t, t.TempDir(), nil, "")
+	var opened app.Config
+	d.runUI = func(_ context.Context, cfg app.Config, _ io.Writer) (int, bool) { opened = cfg; return 0, false }
+	if code := run(context.Background(), []string{"--new", "--autonomy", "3"}, d); code != 0 {
+		t.Fatalf("exit %d: %s", code, errout.String())
+	}
+	if opened.Settings.Autonomy != 3 {
+		t.Fatalf("planning autonomy %d", opened.Settings.Autonomy)
+	}
+	cfg, exists, err := config.LoadID(opened.Settings.Home, opened.ProjectID)
+	if err != nil || !exists || cfg.Autonomy != 8 {
+		t.Fatalf("override persisted: %+v %v %v", cfg, exists, err)
 	}
 }

@@ -1,22 +1,33 @@
 # Huddle
 
-Huddle lets two AI coding agents complete a GitHub milestone from design to delivery in one go: a Dev agent and a PM agent, each played by Codex CLI or Claude Code (by default Codex is the Dev and Claude Code the PM; see [Project settings](#project-settings)). The agents talk through a control issue: they post their own comments on it and set its `state:*` label at the end of each turn. Huddle watches the label and starts whichever agent's turn it is; it adds no limits, timeouts or restrictions. The human is involved only if the PM sets `state:human-required`, or Huddle does for an account or credit error. The spec is [MVP_PLAN.md](MVP_PLAN.md).
+Huddle manages coding projects and runs a Dev agent and PM agent through a GitHub milestone. A read-only companion helps with planning and questions. The agents communicate through a control issue and its `state:*` labels; Huddle starts the agent whose turn it is.
 
-**Status:** Huddle v3 is in progress ([docs/v3](docs/v3/README.md)). v3.1 to v3.6 are done: after the startup checks, `huddle` opens on a [start menu](#start-menu) (plan new milestones with the companion, run an existing milestone, or resume an interrupted one), then shows a full-screen run screen (below) with a companion agent you talk to while the Dev and PM work. Planned milestones run one after another without you. A per-project settings file says which CLI, model and effort plays each role, and one autonomy level (0–10) tells both agents when to hand over. `huddle --plain` behaves like v1.
+**Status:** v4 project lifecycle work is in progress ([spec](docs/v4/README.md), [operating guide](docs/v4/usage.md), [evidence](docs/v4/evidence)). Registry startup, existing-project adoption, durable planning, approved publishing, resume, build-lane separation and text selection are implemented. The from-scratch directory/repository creation flow and final milestone acceptance remain open in #21/#24. Explicit `--repo` entry preserves the v3 workflow described below.
 
 ## Build and run
 
 ```bash
-go build -o huddle ./cmd/huddle
-./huddle --version
+go build -o ./bin/huddle-v4 ./cmd/huddle
+./bin/huddle-v4 --version
 
-# Run from inside a clone of the target repo:
-cd ~/projects/huddle-sandbox && huddle --repo sohaibseniorswe-sys/huddle-sandbox
+# Use an isolated state root for sandbox runs:
+HUDDLE_HOME=/path/to/isolated/state ./bin/huddle-v4 --list
+# Adopt an existing sandbox checkout via its directory:
+# cd /path/to/huddle-sandbox
+# HUDDLE_HOME=/path/to/isolated/state /path/to/huddle/bin/huddle-v4 --adopt
 ```
 
 | Flag | Meaning |
 |------|---------|
-| `--repo owner/name` | Target repo. Default `sohaibseniorswe-sys/palantir`. Use the sandbox for testing. |
+| `--home path` | State root; overrides `HUDDLE_HOME`. Default `$HOME/.huddle`. |
+| `--data-remote URL` | Clone an existing huddle-data store when the local cache is absent. |
+| `--list` | List cached managed projects without GitHub calls. |
+| `--project id` | Open a registry entry and refresh runtime state from GitHub. |
+| `--new` | Create an unnamed planning identity; directory/repo creation remains pending #21. |
+| `--adopt [--respec]` | Adopt the current checkout and plan fresh, or normalize open issues. |
+| `--plan-next --project id` | Resume N+1 planning from a building/done project. |
+| `--prune-draft --project id` | Remove the selected abandoned draft, retaining identity/config. |
+| `--repo owner/name` | Generic explicit legacy entry; there is no built-in repo default. |
 | `--autonomy N` | Autonomy level for this run only, 0 (most careful) to 10 (most independent). Overrides `autonomy` in the settings file without changing the file. Values outside 0–10 are rejected (exit status 2). See [Autonomy](#autonomy). |
 | `--resume` | Skip the start menu and resume the interrupted milestone (see [Start menu](#start-menu)). Fails if there is none. |
 | `--run "<milestone>"` | Skip the start menu and run the open milestone with this title, creating its control issue if it has none. |
@@ -28,7 +39,7 @@ cd ~/projects/huddle-sandbox && huddle --repo sohaibseniorswe-sys/huddle-sandbox
 
 ## Start menu
 
-After the startup checks, Huddle opens on the start menu (`internal/start`, screen 14 in [docs/v3/screens](docs/v3/screens/14-start-menu.png)). ↑/↓ choose, Enter opens, `q` or Esc quits. Only the options that make sense are shown:
+With no target flags, v4 opens the managed-project picker. The following menu applies to the explicit legacy `--repo` path. After the startup checks, that path opens on the start menu (`internal/start`, screen 14 in [docs/v3/screens](docs/v3/screens/14-start-menu.png)). ↑/↓ choose, Enter opens, `q` or Esc quits. Only the options that make sense are shown:
 
 | Option | Shown when | Does |
 |---|---|---|
@@ -41,6 +52,8 @@ After the startup checks, Huddle opens on the start menu (`internal/start`, scre
 `--resume`, `--run "<milestone>"` and `--plan` skip the menu.
 
 ### Plan mode
+
+For v4 registry projects, use the [draft/review/publish workflow](docs/v4/usage.md). This subsection describes the legacy direct-repo protocol.
 
 Plan mode is the run screen with the Companion pane open and no milestone running: the status bar says `Planning`. Talk to the companion: an open question ("what should we do next?") or decisions already made ("create these milestones with their issues, then hand over to the Dev"). It can read the repo, its issues, past milestones and control issues, and search the web. When you have agreed, it writes the plan as a `<plan>` block of `key: value` lines (`milestone:`, `description:`, `issue:`, `body:`; a body may go on over several lines), defined in its instructions. Huddle parses it (`start.ParsePlan`) and shows a **plan card**, "2 milestones, 9 issues", with **Agree**, **Show all** (the whole plan in the Activity slot) and **Keep talking**, with the same focus rules as decision cards. A plan with something missing (a milestone without issues, an issue without a body, …) is not shown as a card: the conversation says what is missing, and nothing is created.
 
@@ -74,7 +87,8 @@ The terminal must be at least 80 × 24.
 | `/decide` | After you have talked with the companion: asks it to draft the decision you agreed, as a card. |
 | `/decision` | While a card waits: moves the keyboard to the card. |
 | `/settings` | The project's settings, read-only: the settings file, repo, folder, control issue, each role's CLI with its version, login, model and effort (and the model its last run really used), autonomy, logs and session ids. To change them, quit and run `huddle setup`. |
-| `/quit` | Same as Ctrl+C: stops the running agent (and a companion still thinking), puts its ready label back, exits. |
+| `/publish` | In v4, review the saved spec package and destination, then explicitly approve publishing. |
+| `/quit` | Ctrl+C with no text selection: stops the running agent (and a companion still thinking), puts its ready label back, exits. |
 
 **Focus.** Keys go only to the focused element: the text field (default), the menu, the Activity pane, the Companion pane or a card (purple border, "◆ focused"). Tab cycles text field → card (while one waits) → Activity → Companion, so one Tab from the text field reaches a waiting card, and the half-typed text stays in the field all the way round. In Activity, ↑/↓ select a line, Enter opens the raw log at that line, Esc goes back. Typing `/` in a pane or on a focused card opens the menu there too, and whatever you had half-typed in the text field comes back when the menu closes. The mouse works too: the wheel scrolls the pane under the pointer, and a click focuses a pane, selects an Activity line or presses a card's button. While Huddle has the mouse, the terminal's own text selection needs Shift + drag in most terminals.
 
@@ -108,7 +122,7 @@ Keys: ↑/↓ field, ←/→ choose, Enter confirm, Esc back one step (choices a
 
 ## Project settings
 
-Each target repo has a settings file, `~/.huddle/projects/<owner>_<repo>.yaml` (`internal/config`). The setup wizard writes it; it is safe to edit by hand. If it has no `dir`, or Huddle is started outside a git repo, the folder in `dir` is used.
+Each project has a settings file, `<state-root>/huddle-data/config/<internal-id>.yaml` (`internal/config`). Legacy `<state-root>/projects/<owner>_<repo>.yaml` files migrate losslessly with backups. The setup wizard writes it; it is safe to edit by hand. If it has no `dir`, or Huddle is started outside a git repo, the folder in `dir` is used.
 
 ```yaml
 repo: sohaibseniorswe-sys/palantir
