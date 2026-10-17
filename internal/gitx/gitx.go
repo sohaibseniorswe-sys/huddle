@@ -47,3 +47,8 @@ func Commit(ctx context.Context, dir, message string, files ...string) error {
 	_, err := run(ctx, dir, args...)
 	return err
 }
+
+// Branch returns the checked-out branch, refusing a detached HEAD.
+func Branch(ctx context.Context, dir string) (string, error) {
+	return run(ctx, dir, "symbolic-ref", "--short", "HEAD")
+}

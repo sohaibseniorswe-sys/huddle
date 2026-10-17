@@ -49,6 +49,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case MilestoneMsg:
 		m, cmd = m.handleMilestone(msg)
 
+	case draftReviewMsg:
+		m = m.handleDraftReview(msg)
+	case draftPublishedMsg:
+		m = m.handleDraftPublished(msg)
 	case planAppliedMsg:
 		m = m.handlePlanApplied(msg)
 
@@ -450,10 +454,11 @@ func (m Model) commandState() commands.State {
 		active = true
 	}
 	return commands.State{
-		CompanionOpen: m.companionOpen,
-		Conversation:  m.conversation(),
-		CardWaiting:   m.card.kind != cardNone,
-		AgentActive:   active && !m.loopDone,
-		Paused:        m.paused,
+		DraftAvailable: m.cfg.Draft != nil,
+		CompanionOpen:  m.companionOpen,
+		Conversation:   m.conversation(),
+		CardWaiting:    m.card.kind != cardNone,
+		AgentActive:    active && !m.loopDone,
+		Paused:         m.paused,
 	}
 }

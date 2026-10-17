@@ -49,11 +49,13 @@ const decisionMarker = "<!-- huddle:decision -->"
 
 // card is the card waiting for an answer.
 type card struct {
-	kind   cardKind
-	text   string     // the decision, or the action ("pause", "log 22:52")
-	reason string     // a decision's one-line reason; may be ""
-	plan   start.Plan // a plan card's plan
-	sel    int        // the index of the chosen button
+	revision string // exact v4 spec/destination approved by this card
+	target   string
+	kind     cardKind
+	text     string     // the decision, or the action ("pause", "log 22:52")
+	reason   string     // a decision's one-line reason; may be ""
+	plan     start.Plan // a plan card's plan
+	sel      int        // the index of the chosen button
 }
 
 // buttons returns the card's button labels, Agree first.
@@ -152,6 +154,10 @@ func (m Model) cardView(rows int) ui.Card {
 		c.Title = "PLAN"
 		c.Text = fmt.Sprintf("%s: %s", m.card.plan.Summary(), planTitles(m.card.plan))
 		c.Note = planNote
+		if m.card.revision != "" {
+			c.Title = "PUBLISH"
+			c.Note = "On Agree, publish the reviewed specs to " + m.card.target + ". Open the project afterward to start building."
+		}
 	}
 	return c
 }
@@ -194,6 +200,9 @@ func (m Model) confirmCard() (Model, tea.Cmd) {
 	case cardAction:
 		return m.runAction(c.text)
 	case cardPlan:
+		if c.revision != "" {
+			return m.agreeDraft(c.revision)
+		}
 		return m.agreePlan(c.plan)
 	}
 	m = m.addEvent(m.huddleEvent(fmt.Sprintf("Posting the decision on #%d…", m.cfg.Control.Number)))

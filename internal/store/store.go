@@ -29,6 +29,7 @@ type Project struct {
 	Name     string    `json:"name"`
 	Dir      string    `json:"dir,omitempty"`
 	Repo     string    `json:"repo,omitempty"`
+	Branch   string    `json:"branch,omitempty"`
 	Phase    string    `json:"phase"`
 	Status   string    `json:"status,omitempty"`
 	Control  int       `json:"control,omitempty"`

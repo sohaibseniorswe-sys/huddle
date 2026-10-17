@@ -135,3 +135,23 @@ One entry per issue: start/finish time, what was built, deviations from the spec
 - Technical choice: checkpoint whole responses, retaining incomplete drafts for
   editing; only publish will require a clean validation result.
 - Deviations: none. Human needed: none.
+
+## v4.08 — #20 approved publishing
+
+- Start: 2026-10-16 20:48 EDT; resumed 23:48 EDT after the CLI usage wait.
+  Finish: 2026-10-16 23:52 EDT.
+- Built: exact-revision/destination approval, `/publish` review/Agree card,
+  validation and active-control gate before writes, Git Data API spec commits to
+  the named working branch (no project Git mutation), missing labels, milestone,
+  dependency-ordered short-reference issues, clean dev-ready control, adoption
+  replacement links/closure, and journaled retry after partial failures.
+- Evidence: approval/stale-review/no-write/gate/failure/retry/dependency/adoption
+  fixtures and app approval tests. REAL sandbox publish created milestone 15,
+  implementation #52 and control #53; superseded #51 closed with replacement
+  link; exact README/specs verified on the retained evidence branch; second
+  approved publish refused without changing the branch. All fixture issues and
+  milestone closed in cleanup. See `docs/v4/evidence/08-publish.md`.
+- Validation: full Go tests, vet, v4 binary build and diff check.
+- Technical choices: approval covers content plus repo/branch; remote branch
+  updates are fast-forward only. Publishing does not implicitly start building.
+- Deviations: none. Human needed: none.

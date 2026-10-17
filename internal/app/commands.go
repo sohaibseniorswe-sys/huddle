@@ -40,6 +40,8 @@ func (m Model) runTyped(matches []commands.Command) (Model, tea.Cmd) {
 // runCommand runs one slash command.
 func (m Model) runCommand(name, args string) (Model, tea.Cmd) {
 	switch name {
+	case commands.Publish:
+		return m.reviewDraft()
 	case commands.Status:
 		m.view, m.focus = viewStatus, focusActivity
 		m.statusVP.GotoTop()
