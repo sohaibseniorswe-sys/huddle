@@ -1,6 +1,6 @@
 // Package config is a project's settings file: which CLI, model and effort
 // play each role (Dev, PM, companion), and the autonomy level. There is one
-// YAML file per target repo, ~/.huddle/projects/<owner>_<repo>.yaml.
+// YAML file per stable project id in <root>/huddle-data/config/.
 //
 // `huddle setup` (the wizard, v3.4) writes the file; until then Huddle uses
 // the defaults, which are what v1 and v2 always ran: Codex as the Dev,
@@ -10,6 +10,7 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +22,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/sohaibseniorswe-sys/huddle/internal/agents"
+	"github.com/sohaibseniorswe-sys/huddle/internal/store"
 )
 
 // DefaultAutonomy is the autonomy level when the file does not set one.
@@ -93,9 +95,9 @@ func Default(repo string) Config {
 }
 
 // Path returns the settings file of repo ("owner/name"):
-// <home>/.huddle/projects/<owner>_<repo>.yaml.
+// <root>/huddle-data/config/<id>.yaml.
 func Path(home, repo string) string {
-	return filepath.Join(home, ".huddle", "projects", strings.ReplaceAll(repo, "/", "_")+".yaml")
+	return (store.Store{Root: home}).ConfigPath(repo)
 }
 
 // Load reads the settings file of repo. If there is none, it returns
@@ -126,6 +128,10 @@ func Load(home, repo string) (c Config, exists bool, err error) {
 // It writes a temporary file and renames it over the old one, so a crash
 // never leaves half a file.
 func Save(home string, c Config) error {
+	st, err := store.Open(context.Background(), home, "")
+	if err != nil {
+		return err
+	}
 	path := Path(home, c.Repo)
 	// Two spaces per level, as people indent YAML by hand (yaml.v3's
 	// own default is four).
@@ -148,7 +154,15 @@ func Save(home string, c Config) error {
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("write config %s: %w", path, err)
 	}
-	return nil
+	p, ok, err := st.FindRepo(c.Repo)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		p = store.Project{ID: store.RepoID(c.Repo), Name: c.Repo, Repo: c.Repo, Phase: "planning"}
+	}
+	p.Dir = c.Dir
+	return st.Put(context.Background(), p)
 }
 
 // Validate checks every value: each CLI is known, each effort is one of

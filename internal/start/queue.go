@@ -15,7 +15,7 @@ import (
 
 // Queue is the milestone queue: the control issues of agreed plans, in
 // the order they run. It is a JSON file,
-// <home>/.huddle/queue/<owner>_<repo>.json, holding a list of control
+// <root>/queue/<owner>_<repo>.json, holding a list of control
 // issue numbers, so it survives a restart of Huddle.
 //
 // The first number is the milestone that runs now (or runs next, if
@@ -28,7 +28,7 @@ type Queue struct {
 // NewQueue returns the queue of repo ("owner/name").
 func NewQueue(home, repo string) Queue {
 	name := strings.ReplaceAll(repo, "/", "_") + ".json"
-	return Queue{Path: filepath.Join(home, ".huddle", "queue", name)}
+	return Queue{Path: filepath.Join(home, "queue", name)}
 }
 
 // queueFile is the file's JSON.

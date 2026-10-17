@@ -328,7 +328,7 @@ func TestHeadWriter(t *testing.T) {
 func TestLogPath(t *testing.T) {
 	ts := time.Date(2026, 10, 12, 17, 5, 9, 0, time.UTC)
 	got := LogPath("/home/u", ts, 3, "pm")
-	if want := "/home/u/.huddle/logs/20261012-170509-turn3-pm.log"; got != want {
+	if want := "/home/u/logs/20261012-170509-turn3-pm.log"; got != want {
 		t.Errorf("LogPath() = %q, want %q", got, want)
 	}
 }

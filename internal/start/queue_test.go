@@ -13,7 +13,7 @@ import (
 func TestQueue(t *testing.T) {
 	home := t.TempDir()
 	q := NewQueue(home, "o/r")
-	if want := filepath.Join(home, ".huddle", "queue", "o_r.json"); q.Path != want {
+	if want := filepath.Join(home, "queue", "o_r.json"); q.Path != want {
 		t.Errorf("Path = %q, want %q", q.Path, want)
 	}
 	got, err := q.Load()

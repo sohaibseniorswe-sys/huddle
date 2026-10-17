@@ -25,7 +25,7 @@ func write(t *testing.T, home, text string) {
 }
 
 func TestPath(t *testing.T) {
-	if got, want := Path("/home/u", repo), "/home/u/.huddle/projects/sohaibseniorswe-sys_palantir.yaml"; got != want {
+	if got, want := Path("/home/u", repo), "/home/u/huddle-data/config/a6bae8fd25bbe1d1848841ef1697b101.yaml"; got != want {
 		t.Errorf("Path() = %q, want %q", got, want)
 	}
 }

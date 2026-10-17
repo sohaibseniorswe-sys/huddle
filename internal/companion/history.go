@@ -28,7 +28,7 @@ type Entry struct {
 }
 
 // History is the conversation's file on disk, one JSON entry per line
-// (JSON Lines): <home>/.huddle/companion/<owner>_<repo>_<issue>.jsonl.
+// (JSON Lines): <root>/companion/<owner>_<repo>_<issue>.jsonl.
 // Appending a line never rewrites what is already there, so a crash can
 // lose at most the entry being written.
 type History struct {
@@ -39,7 +39,7 @@ type History struct {
 // ("owner/name").
 func NewHistory(home, repo string, issue int) History {
 	name := fmt.Sprintf("%s_%d.jsonl", strings.ReplaceAll(repo, "/", "_"), issue)
-	return History{Path: filepath.Join(home, ".huddle", "companion", name)}
+	return History{Path: filepath.Join(home, "companion", name)}
 }
 
 // Load returns every entry, oldest first. A missing file is an empty

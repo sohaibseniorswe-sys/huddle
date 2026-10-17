@@ -55,7 +55,7 @@ exit 1
 	if u := l.usageLimit(session.Dev, res.Output); !u.Hit {
 		t.Errorf("usage limit not found in the time-stamped log: %+v", u)
 	}
-	logs, _ := filepath.Glob(filepath.Join(home, ".huddle", "logs", "*-turn7-dev.log"))
+	logs, _ := filepath.Glob(filepath.Join(home, "logs", "*-turn7-dev.log"))
 	if len(logs) != 1 {
 		t.Fatalf("logs = %v, want one turn7-dev log", logs)
 	}
@@ -142,7 +142,7 @@ printf 'Set state:dev-ready' > "$last"
 	if len(events) != 1 || events[0].Actor != activity.ActorCodex {
 		t.Errorf("PM events = %+v, want one codex event", events)
 	}
-	logs, _ := filepath.Glob(filepath.Join(home, ".huddle", "logs", "*-turn2-pm.log"))
+	logs, _ := filepath.Glob(filepath.Join(home, "logs", "*-turn2-pm.log"))
 	if len(logs) != 1 {
 		t.Errorf("logs = %v, want one turn2-pm log", logs)
 	}

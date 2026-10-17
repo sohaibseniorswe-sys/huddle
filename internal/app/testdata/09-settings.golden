@@ -2,7 +2,7 @@
  Issues 4/7 closed  ·  PRs #73 open  ·  CI green  ·  Usage Codex ok · Claude ok  ·  Elapsed 2h14m   
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Settings  ◆ focused                                                        esc: back to activity │
-│ ~/.huddle/projects/sohaibseniorswe-sys_palantir.yaml                                             │
+│ ~/huddle-data/config/a6bae8fd25bbe1d1848841ef1697b101.yaml                                       │
 │                                                                                                  │
 │ Project                                                                                          │
 │   Repo            sohaibseniorswe-sys/palantir                                                   │
@@ -20,7 +20,7 @@
 │   Level           8 · Autonomous                                                                 │
 │                                                                                                  │
 │ Files                                                                                            │
-│   Logs            ~/.huddle/logs/  (2 runs of this repo)                                         │
+│   Logs            ~/logs/  (2 runs of this repo)                                                 │
 │   Sessions        Dev 01a1…f981 · PM 717c…02f5                                                   │
 │                                                                                                  │
 │ Read-only. To change settings, quit and run: huddle setup                                        │
