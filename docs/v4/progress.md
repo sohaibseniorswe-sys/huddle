@@ -6,7 +6,7 @@ One entry per issue: start/finish time, what was built, deviations from the spec
 
 ## v4.01 — #13 state root, store and registry
 
-- Start: 2026-10-16 20:27 EDT. Finish: 2026-10-16 20:40 EDT.
+- Start: 2026-10-16 20:27 EDT. Finish: 2026-10-16 20:29 EDT.
 - Built: `--home` / `HUDDLE_HOME` resolution, root-relative logs/sessions/queues,
   Huddle-owned Git store initialization/cloning, per-ID project records and light
   index, immediate config/registry commits, explicit draft checkpoints, and
