@@ -8,6 +8,7 @@ import "strings"
 
 // The command names.
 const (
+	Publish   = "/publish"
 	Status    = "/status"
 	Companion = "/companion"
 	Decide    = "/decide"
@@ -30,11 +31,12 @@ type Command struct {
 
 // State is what the visibility rules look at.
 type State struct {
-	CompanionOpen bool // the Companion pane is open
-	Conversation  bool // the human and the companion have talked
-	CardWaiting   bool // a decision or action card waits for an answer
-	AgentActive   bool // an agent is running or about to run
-	Paused        bool // /pause was used and no /resume yet
+	DraftAvailable bool // a v4 workspace can be reviewed for publishing
+	CompanionOpen  bool // the Companion pane is open
+	Conversation   bool // the human and the companion have talked
+	CardWaiting    bool // a decision or action card waits for an answer
+	AgentActive    bool // an agent is running or about to run
+	Paused         bool // /pause was used and no /resume yet
 }
 
 // Visible returns the commands that make sense in state s, in menu order.
@@ -56,6 +58,7 @@ func all(s State) []Command {
 		companion = Command{Name: Companion, Desc: "open or close the companion pane (open now)", Lit: true}
 	}
 	return []Command{
+		{Name: Publish, Desc: "review saved specs and approve publishing"},
 		{Name: Status, Desc: "facts: issues, PRs, CI, turns, usage, elapsed"},
 		companion,
 		{Name: Decide, Desc: "draft a decision from the companion conversation"},
@@ -71,6 +74,8 @@ func all(s State) []Command {
 // shown is the visibility table from docs/v3/README.md.
 func shown(name string, s State) bool {
 	switch name {
+	case Publish:
+		return s.DraftAvailable
 	case Pause:
 		return s.AgentActive && !s.Paused
 	case Resume:

@@ -471,3 +471,12 @@ conversation even without the original CLI session. The embedded Milestone Spec
 Standard checks required sections, acceptance evidence, workflow instructions,
 and dependency cycles. Incomplete drafts remain editable; validation problems
 must be fixed before publishing. Drafting itself writes nothing to GitHub.
+
+Use `/publish` in a v4 planning conversation to review the exact saved package and
+its destination repo/working branch. `Show all` displays the specs. `Agree`
+authorizes that revision only; changing the package or destination requires a new
+review. Publishing writes specs to `docs/<slug>/`, creates missing state labels,
+the milestone, dependency-ordered reference issues, and a clean dev-ready control.
+An active control blocks the next milestone. Adoption links and closes superseded
+issues. Completed steps are journaled for retry. Publishing leaves the project
+`published`; reopen it and choose Start when ready to build.

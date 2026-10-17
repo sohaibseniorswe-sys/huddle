@@ -504,6 +504,12 @@ func run(ctx context.Context, args []string, d deps) int {
 		project = store.Project{ID: store.RepoID(target), Name: target, Repo: target, Phase: "planning", Status: "PLANNED"}
 	}
 	project.Dir = root
+	if project.Branch == "" {
+		project.Branch, err = gitx.Branch(ctx, root)
+		if err != nil {
+			return fail(err)
+		}
+	}
 	if err := st.Put(ctx, project); err != nil {
 		return fail(err)
 	}

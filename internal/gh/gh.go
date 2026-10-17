@@ -39,6 +39,8 @@ type Label struct {
 
 // Client is the set of GitHub operations Huddle needs.
 type Client interface {
+	WriteFiles(context.Context, string, string, []File) error
+	CloseIssue(context.Context, string, int, string) error
 	// AuthStatus succeeds if gh is logged in.
 	AuthStatus(ctx context.Context) error
 	// RepoView succeeds if repo ("owner/name") exists and is accessible.
@@ -272,4 +274,10 @@ func parseIssues(data []byte) ([]Issue, error) {
 		}
 	}
 	return issues, nil
+}
+
+// File is one UTF-8 document written by an approved publish operation.
+type File struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
 }

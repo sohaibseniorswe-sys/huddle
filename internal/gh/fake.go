@@ -9,6 +9,8 @@ import (
 // Fake is an in-memory Client for tests. The zero value is a logged-in user
 // with access to every repo, no labels and no issues.
 type Fake struct {
+	Written       []File
+	WriteErr      error
 	AuthErr       error
 	RepoErr       error
 	Login         string // returned by User; "" means "octocat"
@@ -93,7 +95,7 @@ func (f *Fake) ListIssues(_ context.Context, _, state string) ([]Issue, error) {
 	}
 	var out []Issue
 	for _, is := range f.Issues {
-		if is.Closed == (state == "closed") {
+		if state == "all" || is.Closed == (state == "closed") {
 			out = append(out, is)
 		}
 	}
@@ -243,5 +245,26 @@ func (f *Fake) EditBody(_ context.Context, _ string, number int, body string) er
 	}
 	is.Body = body
 	f.Log = append(f.Log, fmt.Sprintf("body #%d", number))
+	return nil
+}
+
+func (f *Fake) WriteFiles(_ context.Context, repo, branch string, files []File) error {
+	if f.WriteErr != nil {
+		return f.WriteErr
+	}
+	f.Written = append(f.Written, files...)
+	f.Log = append(f.Log, "specs "+repo+" "+branch)
+	return nil
+}
+func (f *Fake) CloseIssue(ctx context.Context, repo string, n int, body string) error {
+	is, err := f.issue(n)
+	if err != nil {
+		return err
+	}
+	if err := f.PostComment(ctx, repo, n, body); err != nil {
+		return err
+	}
+	is.Closed = true
+	f.Log = append(f.Log, fmt.Sprintf("close #%d", n))
 	return nil
 }
