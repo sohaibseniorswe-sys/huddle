@@ -52,7 +52,11 @@ func (m Model) handleDraftReview(msg draftReviewMsg) Model {
 		ms.Issues = append(ms.Issues, start.PlannedIssue{Title: is.Title, Body: is.Text})
 	}
 	m.planText = d.Text()
-	return m.showCard(card{kind: cardPlan, plan: start.Plan{Milestones: []start.PlannedMilestone{ms}}, revision: msg.preview.Revision, target: msg.preview.Project.Repo + " @ " + msg.preview.Project.Branch})
+	target := msg.preview.Project.Repo + " @ " + msg.preview.Project.Branch
+	if d.Project != nil {
+		target = "Create PRIVATE repo " + target + " · " + d.Project.Dir + " · bootstrap checkout"
+	}
+	return m.showCard(card{kind: cardPlan, plan: start.Plan{Milestones: []start.PlannedMilestone{ms}}, revision: msg.preview.Revision, target: target})
 }
 
 // agreeDraft is reachable only through the reviewed card's Agree action.

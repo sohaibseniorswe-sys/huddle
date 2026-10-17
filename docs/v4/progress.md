@@ -242,3 +242,30 @@ One entry per issue: start/finish time, what was built, deviations from the spec
   exact new → plan → publish → build → done → plan-next acceptance and close #24.
   An adopted-project run is not claimed as new-repo evidence. Human needed: none;
   handoff to PM for the recorded convention conflict.
+
+## v4.09 resumed — 2026-10-17 04:24 UTC
+Start: PM decision 6497984 authorizes the single private throwaway acceptance repo and bootstrap. Implementing proposed project outputs within the existing publish gate; choosing the documented setup-only clone exception. No human blocker.
+
+Finish: 2026-10-17 04:30 UTC. Built optional typed new-project draft outputs,
+registry name caching, exact destination review, approved private gh/API creation,
+setup-only staged clone and durable destination/step recovery. Preserved config
+choices while binding repo/path to the stable id. Existing/foreign destinations
+are refused; partial setup cannot redirect. README documents the sole clone
+exception selected under the PM decision. New tests cover success and failures.
+REAL authorized acceptance: private `huddle-sandbox-new-20261017-0427`, isolated
+root `/tmp/huddle-v4-new-20261017-0427`; mid-planning reload → approved creation →
+publish → real binary with scripted Dev/PM → done → plan-next → fresh-root clone/
+list passed in 55.64s. Repository archived afterwards. No extra repo created.
+Evidence: `docs/v4/evidence/09-new-project.md`; #24 final writeup follows.
+Validation: full Go tests, vet and canonical build passed; final CI pending.
+Deviations: bootstrap uses the PM-permitted one-time clone, explicitly documented.
+Human needed: none.
+
+v4.09 verification correction (04:33 UTC): review found that the original
+lifecycle harness supplied AGENTS.md/CLAUDE.md, masking a first-Start precondition.
+Bootstrap now creates non-overwriting local instruction starters without Git
+commits. The harness requires them before launch and preserves them. A follow-up
+uses the same private repo and a second isolated root, including recovery of the
+already-created remote. Its first attempt hit a duplicate fixture milestone title
+(HTTP 422); the fixture now uses a unique title, and retry retains the completed
+setup. No second repo was created. Final result recorded below.

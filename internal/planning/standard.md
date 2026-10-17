@@ -12,3 +12,10 @@ Return a complete package in a <draft>JSON</draft> block, outside Markdown fence
 The companion is read-only. It never writes files or GitHub state. Huddle saves
 its returned package and conversation in huddle-data. Drafting and saving are
 not publishing. The human must review and explicitly approve any publish.
+
+For a new project, once decided with the human, add an optional "project" object
+to the draft: {"name":"Project name","dir":"/absolute/path/to/new-directory",
+"repo":"owner/new-repository","branch":"main"}. Leave it out for existing
+projects. Name/directory/repo are planning outputs, never required to start.
+This proposes creation of a PRIVATE repo and a one-time checkout bootstrap,
+all included in the human publish review. Saving the proposal creates nothing.
