@@ -323,6 +323,13 @@ func (w Workspace) Context() (string, error) {
 			fmt.Fprintf(&b, "Latest candidate needs JSON repair:\n%s\n", candidate)
 		}
 	}
+	adoption, err := os.ReadFile(filepath.Join(w.Dir(), "adoption.json"))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if len(adoption) > 0 {
+		fmt.Fprintf(&b, "Existing-project adoption input:\n%s\nIf respec is true, normalize these issues into the draft and put each superseded issue number on its replacement's supersedes list. If false, plan a fresh milestone without superseding issues.\n", adoption)
+	}
 	history, err := w.History().Load()
 	if err != nil {
 		return "", err

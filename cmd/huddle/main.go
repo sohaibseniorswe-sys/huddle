@@ -39,6 +39,7 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/lanes"
 	"github.com/sohaibseniorswe-sys/huddle/internal/lifecycle"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
+	"github.com/sohaibseniorswe-sys/huddle/internal/onboarding"
 	"github.com/sohaibseniorswe-sys/huddle/internal/planning"
 	"github.com/sohaibseniorswe-sys/huddle/internal/runner"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
@@ -107,6 +108,9 @@ func main() {
 }
 
 type options struct {
+	adopt      bool
+	respec     bool
+	planNext   bool
 	pruneDraft bool
 	project    string
 	list       bool
@@ -141,6 +145,9 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	fs.BoolVar(&o.plain, "plain", false, "print plain lines to stdout instead of the full-screen UI (as v1 did)")
 	fs.StringVar(&o.repo, "repo", "", "open a repo as owner/name (legacy direct entry)")
 	fs.StringVar(&o.project, "project", "", "open a registry project by internal id")
+	fs.BoolVar(&o.adopt, "adopt", false, "adopt the existing project in the current directory")
+	fs.BoolVar(&o.respec, "respec", false, "normalize existing open issues when adopting")
+	fs.BoolVar(&o.planNext, "plan-next", false, "draft the next milestone for the selected done/building project")
 	fs.BoolVar(&o.pruneDraft, "prune-draft", false, "remove the selected project’s abandoned draft")
 	fs.BoolVar(&o.list, "list", false, "list registry projects without network calls")
 	fs.BoolVar(&o.newProject, "new", false, "start an unnamed planning project")
@@ -191,7 +198,7 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 			o.autonomy, config.MinAutonomy, config.MaxAutonomy)
 	}
 	modes := 0
-	for _, set := range []bool{o.resume, o.runTitle != "", o.plan} {
+	for _, set := range []bool{o.resume, o.runTitle != "", o.plan, o.planNext} {
 		if set {
 			modes++
 		}
@@ -199,10 +206,25 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	if modes > 1 {
 		return o, errors.New("use only one of --resume, --run and --plan")
 	}
+	if o.repo != "" && (o.project != "" || o.newProject) {
+		return o, errors.New("choose one of --repo, --project and --new")
+	}
+	if o.newProject && o.project != "" {
+		return o, errors.New("choose one of --project and --new")
+	}
+	if o.respec && !o.adopt {
+		return o, errors.New("--respec requires --adopt")
+	}
+	if o.planNext && o.project == "" {
+		return o, errors.New("--plan-next requires --project <id>")
+	}
+	if o.adopt && (o.repo != "" || o.project != "" || o.newProject) {
+		return o, errors.New("--adopt selects the current directory; do not combine target flags")
+	}
 	if o.pruneDraft && (o.project == "" || o.newProject || o.repo != "") {
 		return o, errors.New("--prune-draft requires --project <id>")
 	}
-	if o.plain && (o.plan || o.runTitle != "") {
+	if o.plain && (o.plan || o.planNext || o.runTitle != "") {
 		return o, errors.New("--plan and --run need the run screen; leave out --plain")
 	}
 	return o, nil
@@ -260,8 +282,8 @@ func run(ctx context.Context, args []string, d deps) int {
 	}
 	var selected *store.Project
 	if target == "" {
-		choice := start.ProjectChoice{ID: opts.project, New: opts.newProject}
-		if choice.ID == "" && !choice.New {
+		choice := start.ProjectChoice{ID: opts.project, New: opts.newProject, Adopt: opts.adopt}
+		if choice.ID == "" && !choice.New && !choice.Adopt {
 			if d.runProjects == nil {
 				return fail(errors.New("choose --project, --repo or --new"))
 			}
@@ -270,7 +292,18 @@ func run(ctx context.Context, args []string, d deps) int {
 				return fail(err)
 			}
 		}
-		if choice.New {
+		if choice.Adopt {
+			dir, err := d.getwd()
+			if err != nil {
+				return fail(err)
+			}
+			p, err := onboarding.Adopt(ctx, st, d.gh, dir, opts.respec)
+			if err != nil {
+				return fail(err)
+			}
+			selected = &p
+			opts.plan = true
+		} else if choice.New {
 			id, err := store.NewID()
 			if err != nil {
 				return fail(err)
@@ -328,6 +361,12 @@ func run(ctx context.Context, args []string, d deps) int {
 		if err != nil {
 			return fail(err)
 		}
+		if opts.planNext && p.Phase != "done" && p.Phase != "building" {
+			return fail(errors.New("plan-next requires a done or building project"))
+		}
+		if opts.plan || opts.planNext {
+			route = start.RoutePlan
+		}
 		fmt.Fprintf(d.stdout, "%s: %s\n", p.ID, route)
 		switch route {
 		case start.RoutePlan:
@@ -361,15 +400,45 @@ func run(ctx context.Context, args []string, d deps) int {
 			d.getwd = func() (string, error) { return p.Dir, nil }
 		}
 	}
-	// A planning identity needs no project checkout, GitHub, or build agents.
-	if selected != nil && target == "" {
-		cfg := config.Default("")
+	// Planning never prepares project files/labels or checks build-agent logins.
+	if selected != nil && opts.plan {
+		w := planning.Workspace{Store: st, ProjectID: selected.ID}
+		if selected.Phase == "done" || selected.Phase == "building" {
+			started, err := onboarding.BeginNext(ctx, w)
+			if err != nil {
+				return fail(err)
+			}
+			if started {
+				if err := session.NewCompanion(home, "planning-"+selected.ID, 0).Forget(session.Companion); err != nil {
+					return fail(err)
+				}
+			}
+		}
+		cfg, exists, err := config.LoadID(home, selected.ID)
+		if err != nil {
+			return fail(err)
+		}
+		if !exists {
+			if err := config.SaveID(home, selected.ID, cfg); err != nil {
+				return fail(err)
+			}
+		}
+		if err := cfg.Validate(); err != nil {
+			return fail(err)
+		}
 		team, err := cfg.Team()
 		if err != nil {
 			return fail(err)
 		}
-		root := st.Data()
-		s := starter{freshSessions: true, d: d, opts: opts, projectID: selected.ID, target: "", home: home, root: root, cfg: cfg, team: team}
+		versions, err := d.agents.Check(ctx, []string{team.Companion.CLI.Binary})
+		if err != nil {
+			return fail(err)
+		}
+		root := selected.Dir
+		if root == "" {
+			root = st.Data()
+		}
+		s := starter{freshSessions: true, d: d, opts: opts, projectID: selected.ID, target: selected.Repo, home: home, root: root, cfg: cfg, team: team, exists: true, versions: versions}
 		ui := s.screenConfig(gh.Issue{})
 		ui.Planning = true
 		code, _ := d.runUI(ctx, ui, d.stderr)
@@ -774,6 +843,7 @@ func (s starter) screenConfig(control gh.Issue) app.Config {
 	}
 	if s.freshSessions {
 		w := planning.Workspace{Store: store.Store{Root: s.home}, ProjectID: s.projectID}
+		screen.Settings.Path = filepath.Join(w.Store.Data(), "config", s.projectID+".yaml")
 		screen.Draft = &w
 		screen.History = w.History()
 		agent := screen.Companion.(companion.Agent)

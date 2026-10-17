@@ -155,3 +155,26 @@ One entry per issue: start/finish time, what was built, deviations from the spec
 - Technical choices: approval covers content plus repo/branch; remote branch
   updates are fast-forward only. Publishing does not implicitly start building.
 - Deviations: none. Human needed: none.
+
+## v4.10 — #22 existing-project onboarding
+
+- Start: 2026-10-16 23:52 EDT. Finish: 2026-10-16 23:58 EDT.
+- Built: picker/CLI adoption by remote or directory, durable open-issue input for
+  re-spec vs fresh planning, ID-based settings for repo-less identities,
+  `--plan-next`, independent planning while building, archive of a published
+  draft and restart-safe resume of unfinished N+1. Planning now bypasses build
+  preparation, project file/label writes and build-agent login requirements.
+- Evidence: identity/directory fallback, no-write planning, published draft archive,
+  runtime preservation and unfinished-draft resume tests. REAL sandbox adoption:
+  remote adopted into ID 11e2c2a4388d1628d230fbb91458f232; #54 normalized/linked
+  to #55; N control #56 at PM-working while N+1 drafted and publish was refused;
+  done entry resumed N+1 and then published #58. See
+  `docs/v4/evidence/10-onboarding.md`. Fixtures closed; evidence branch retained.
+- Validation: full Go tests, vet, v4 binary build and diff check.
+- Technical choice: `--adopt --respec` chooses normalization; plain `--adopt`
+  chooses a fresh milestone. Current runtime phase/control are never overwritten
+  merely to begin planning.
+- Deviation/dependency note: #21's new-directory/repo creation evidence is blocked
+  on the sandbox-only/Git ownership conventions; question recorded on #21.
+  Existing-repo onboarding has no dependency on that flow. Human needed: none;
+  the PM can decide the #21 convention conflict at handoff.

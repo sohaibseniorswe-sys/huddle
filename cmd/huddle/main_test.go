@@ -823,3 +823,39 @@ func TestNewProjectRoutesToPlanningWithoutCheckout(t *testing.T) {
 		t.Fatalf("resume exit %d: %s", code, errout.String())
 	}
 }
+
+func TestPlanWhileBuildingUsesCompanionLaneWithoutWrites(t *testing.T) {
+	dir := gitRepo(t, "https://github.com/"+sandbox+".git")
+	d, _, errout := testDeps(t, dir, nil, "")
+	home, _ := d.lookupEnv("HOME")
+	root := filepath.Join(home, ".huddle")
+	s, err := store.Open(context.Background(), root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := store.Project{ID: "building", Repo: sandbox, Dir: dir, Branch: "main", Phase: "building", Status: "ACTIVE", Control: 3, Started: true}
+	if err := s.Put(context.Background(), p); err != nil {
+		t.Fatal(err)
+	}
+	f := d.gh.(*gh.Fake)
+	f.Issues[0].Labels = []string{"control", gh.StatePMWorking}
+	opened := false
+	d.runUI = func(_ context.Context, cfg app.Config, _ io.Writer) (int, bool) {
+		opened = cfg.Planning && cfg.Draft != nil && cfg.First.Number == 0
+		return 0, false
+	}
+	d.runWizard = func(context.Context, wizard.Deps, config.Config) (config.Config, error) {
+		t.Error("planning invoked project-preparation wizard")
+		return config.Config{}, nil
+	}
+	if code := run(context.Background(), []string{"--project", p.ID, "--plan-next"}, d); code != 0 {
+		t.Fatalf("exit %d: %s", code, errout.String())
+	}
+	if !opened || len(f.Created) != 0 || len(f.Log) != 0 || f.Edits != 0 {
+		t.Fatalf("planning blocked/wrote GitHub: opened=%v labels=%v log=%v", opened, f.Created, f.Log)
+	}
+	cached, err := s.Read(p.ID)
+	if err != nil || cached.Phase != "building" || cached.Control != 3 {
+		t.Fatalf("runtime changed %+v %v", cached, err)
+	}
+}
