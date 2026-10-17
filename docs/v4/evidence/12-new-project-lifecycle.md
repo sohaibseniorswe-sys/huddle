@@ -83,7 +83,7 @@ not claim another new-repository creation.
         huddle: --- sohaibseniorswe-sys https://github.com/sohaibseniorswe-sys/huddle-sandbox-new-20261017-0427/issues/6#issuecomment-6229674475
         Status: Completed. Sandbox fixture issue verified; lifecycle complete.
         ---
-        
+
         Agent args:
         exec --strict-config --ignore-user-config -c sandbox_mode="danger-full-access" -c approval_policy="never" --output-last-message /tmp/huddle-v4-new-20261017-0427-final/logs/20261017-003253-turn1-dev.last -
         -p --output-format json --dangerously-skip-permissions

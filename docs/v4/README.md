@@ -73,3 +73,9 @@ Issue numbers equal a valid topological order, so sequential execution respects 
 ## 7. Completion
 
 Milestone complete when every issue meets its Success criteria and the shared Definition of Done, the full lifecycle runs on sandbox (new → plan → publish → build → done → plan-next), the fresh-machine story works (clone `huddle-data` → all projects listed), Palantir runs as a normal registry entry, and v3 milestones still run.
+
+
+Implementation acceptance: the [new-project lifecycle](evidence/12-new-project-lifecycle.md),
+[fresh-machine listing](evidence/12-new-project-lifecycle.md) and
+[v3 regression results](evidence/12-regression.md) are recorded under evidence.
+The single authorized new private acceptance repository was archived afterwards.

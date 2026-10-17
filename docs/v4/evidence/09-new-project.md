@@ -54,3 +54,13 @@ publish do not duplicate work; partial setup cannot redirect to another repo.
 After this acceptance run, chosen names were also cached during draft saving so
 the picker labels repo-less projects before approval; this local-only refinement
 is covered by the ordinary tests.
+
+## Corrected bootstrap verification
+
+The initial run's helper supplied AGENTS.md/CLAUDE.md. Review identified that
+this could mask a first-Start failure. Bootstrap now creates its own local
+non-overwriting starters, and acceptance asserts them before the helper runs.
+The corrected follow-up reused the same private repository with a second root,
+resumed setup after a duplicate fixture title was corrected, and passed in
+47.67s. The repository was archived again. See [the final lifecycle evidence](12-new-project-lifecycle.md)
+for controls #6/#8 and the full output. No additional repository was created.

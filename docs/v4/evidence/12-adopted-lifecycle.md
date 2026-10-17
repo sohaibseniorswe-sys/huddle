@@ -5,8 +5,8 @@ process runner, isolated state roots and a temporary huddle-sandbox checkout.
 Dev/PM processes were scripted acceptance fixtures; real companion planning is
 recorded separately in [07-planning.md](07-planning.md).
 
-This run proves the **existing-project** lifecycle, not new-repo creation. #21's
-from-scratch directory/repo creation and final #24 acceptance remain open.
+This run proves the **existing-project** lifecycle. The subsequently completed
+new-project acceptance is recorded separately in [12-new-project-lifecycle.md](12-new-project-lifecycle.md).
 
 The run adopted the remote, normalized an old issue into validated specs,
 published, ran fresh Dev/PM processes through the real build loop, drafted N+1

@@ -126,7 +126,7 @@ The clone contains stable IDs, cached status, settings and planning drafts.
 Logs and runtime session metadata stay local. Opening a project refreshes GitHub
 runtime truth and lets you relocate a machine-specific checkout path.
 
-## Validation and remaining acceptance
+## Validation and acceptance
 
 Run `go test ./...`, `go vet ./...`, and build the canonical binary. PR CI checks
 Linux and macOS; v3 direct-entry, loop, prompt and golden tests remain in the full
@@ -135,5 +135,6 @@ suite. Race detection is unavailable in this image without a C compiler.
 See [evidence](evidence) for sandbox planning, publish, onboarding, concurrency,
 session isolation and terminal selection checks. Real agent planning is explicitly
 identified; orchestration fixtures use scripted Dev/PM processes and real GitHub,
-process runner and build loop. Final #24 completion still requires the full
-from-scratch #21 flow; an adopted-project run is not new-repo creation evidence.
+process runner and build loop. The authorized new-project lifecycle and
+fresh-machine listing passed; see [the final acceptance notes](evidence/12-new-project-lifecycle.md).
+The existing-project run remains separate evidence of adoption.
