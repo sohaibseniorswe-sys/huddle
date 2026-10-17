@@ -93,3 +93,25 @@ One entry per issue: start/finish time, what was built, deviations from the spec
   session boundary rather than a mandatory PM review. Agent CLIs were scripted
   in sandbox evidence; the process runner/GitHub/loop were real.
 - Deviations: none. Human needed: none.
+
+## v4.06 — #18 concurrency lanes
+
+- Start: 2026-10-16 20:39 EDT. Finish: 2026-10-16 20:42 EDT.
+- Built: root-scoped OS build lease across processes, clear second-build refusal,
+  crash-safe lock release, independent unrestricted companion lane, and dynamic
+  shared-CLI usage warning. Git store commits are serialized separately; config
+  and registry commits no longer checkpoint unfinished planning drafts.
+- Evidence: lease/refusal/isolation/warning tests; killed-subprocess lock recovery;
+  concurrent registry/index commits; draft-checkpoint separation. REAL sandbox:
+  https://github.com/sohaibseniorswe-sys/huddle-sandbox/issues/50
+  `HUDDLE_V4_SANDBOX=1 go test ./internal/integration -run TestSandboxConcurrentPlanning -v`.
+  Real binary/loop/GitHub with scripted agents: PM X held running, second build
+  refused, companion Y answered with read-only args (`--setting-sources user`),
+  usage warning fired, then PM X handed off normally. Fixture cleanup completed.
+- Validation: full Go tests, vet, v4 binary build and Windows cross-compile.
+  Race checks could not run: CGO is disabled and this image has no C compiler. The temporary cross-compile artifact was discarded and the
+  canonical Linux test binary remains `./bin/huddle-v4`.
+- Technical choice: locks are per state root to preserve deliberate instance
+  isolation; metadata alone never establishes liveness.
+- Deviations: Windows cross-compile used a temporary output artifact, removed
+  after checking; no production binary touched. Human needed: none.

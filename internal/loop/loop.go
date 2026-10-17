@@ -88,6 +88,7 @@ type Loop struct {
 	Clock         Clock
 	Report        Reporter                                  // told about every step and status change
 	Controls      *Controls                                 // pause, resume and wake from the run screen; must not be nil
+	Acquire       func(context.Context) (func(), error)     // hold the build lane for Run
 	BeforeTurn    func(context.Context, session.Role) error // persist v4 lifecycle before launching a turn
 	FreshSessions bool                                      // v4: every issue/role turn starts fresh; retries within a turn may resume
 	Once          bool                                      // run a single turn, then exit
@@ -116,6 +117,14 @@ var errInterrupted = errors.New("interrupted")
 // and StateClosed cases), Ctrl+C (ExitInterrupted), or
 // the end of the first turn with Once (ExitOK).
 func (l *Loop) Run(ctx context.Context) int {
+	if l.Acquire != nil {
+		release, err := l.Acquire(ctx)
+		if err != nil {
+			l.printf("cannot start build: %v", err)
+			return 1
+		}
+		defer release()
+	}
 	hintShown := false  // "add state:dev-ready" reported for the current no-label spell
 	shownComment := ""  // the human-required comment already reported
 	pauseShown := false // "Paused" reported for the current pause

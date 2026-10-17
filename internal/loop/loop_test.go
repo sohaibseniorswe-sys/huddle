@@ -1038,3 +1038,15 @@ func TestFreshIssueUsageRetryKeepsCurrentSession(t *testing.T) {
 		t.Fatalf("calls %+v", e.agents.calls)
 	}
 }
+
+func TestBusyBuildNeverLaunchesAgent(t *testing.T) {
+	e := newEnv(t, gh.StateDevReady)
+	e.loop.Acquire = func(context.Context) (func(), error) { return nil, fmt.Errorf("another build loop is active") }
+	if code := e.run(); code != 1 {
+		t.Fatalf("code %d", code)
+	}
+	if len(e.agents.calls) != 0 {
+		t.Fatal("agent launched despite busy build lane")
+	}
+	e.wantStates(gh.StateDevReady)
+}

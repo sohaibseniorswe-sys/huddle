@@ -2,6 +2,7 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -11,9 +12,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sohaibseniorswe-sys/huddle/internal/agents"
 	"github.com/sohaibseniorswe-sys/huddle/internal/checks"
+	"github.com/sohaibseniorswe-sys/huddle/internal/companion"
 	"github.com/sohaibseniorswe-sys/huddle/internal/config"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
+	"github.com/sohaibseniorswe-sys/huddle/internal/lanes"
+	"github.com/sohaibseniorswe-sys/huddle/internal/runner"
+	"github.com/sohaibseniorswe-sys/huddle/internal/session"
 	"github.com/sohaibseniorswe-sys/huddle/internal/store"
 )
 
@@ -22,11 +28,13 @@ const sandbox = "sohaibseniorswe-sys/huddle-sandbox"
 // TestSandboxResume runs the real binary and GitHub control loop against a
 // throwaway sandbox milestone. Agent processes are scripted so this verifies
 // orchestration, not model quality, and never starts autonomous work in the repo.
-func TestSandboxResume(t *testing.T) { sandboxResume(t, false) }
+func TestSandboxResume(t *testing.T) { sandboxResume(t, false, false) }
 
-func TestSandboxFreshIssueSessions(t *testing.T) { sandboxResume(t, true) }
+func TestSandboxFreshIssueSessions(t *testing.T) { sandboxResume(t, true, false) }
 
-func sandboxResume(t *testing.T, multi bool) {
+func TestSandboxConcurrentPlanning(t *testing.T) { sandboxResume(t, false, true) }
+
+func sandboxResume(t *testing.T, multi, concurrent bool) {
 	if os.Getenv("HUDDLE_V4_SANDBOX") != "1" {
 		t.Skip("set HUDDLE_V4_SANDBOX=1; requires sandbox access and built ./bin/huddle-v4")
 	}
@@ -139,6 +147,10 @@ printf 'session id: sandbox-fresh-session\n' >&2
 `, control, sandbox, sandbox, title, root, work[1], sandbox, control, sandbox, work[0], sandbox, root)
 		script = strings.Replace(script, "echo '{\"type\":\"result\"", extra+"\necho '{\"type\":\"result\"", 1)
 	}
+	if concurrent {
+		gate := fmt.Sprintf("touch '%s/pm-started'\nwhile ! test -f '%s/release-pm'; do sleep 0.05; done\n", root, root)
+		script = strings.Replace(script, "cat >/dev/null", "cat >/dev/null\n"+gate, 1)
+	}
 	for _, name := range []string{"codex", "claude"} {
 		if err := os.WriteFile(filepath.Join(bins, name), []byte(script), 0700); err != nil {
 			t.Fatal(err)
@@ -146,9 +158,14 @@ printf 'session id: sandbox-fresh-session\n' >&2
 	}
 	cmd = exec.CommandContext(ctx, binary, "--home", root, "--project", p.ID, "--plain", "--once", "--yes")
 	cmd.Env = append(os.Environ(), "HUDDLE_HOME="+root, "PATH="+bins+string(os.PathListSeparator)+os.Getenv("PATH"))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("real sandbox resume: %s %v", out, err)
+	var out []byte
+	if concurrent {
+		out = concurrentPlanning(t, ctx, cmd, root, binary, p.ID, checkout)
+	} else {
+		out, err = cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("real sandbox resume: %s %v", out, err)
+		}
 	}
 	if !strings.Contains(string(out), "PM (Claude Code), fresh session") || !strings.Contains(string(out), "state:dev-ready") {
 		t.Fatalf("wrong resumed turn: %s", out)
@@ -194,4 +211,68 @@ printf 'session id: sandbox-fresh-session\n' >&2
 		}
 	}
 	t.Logf("REAL sandbox live-loop evidence (scripted PM): https://github.com/%s/issues/%d\n%s\nAgent args: %s", sandbox, control, out, data)
+}
+
+func concurrentPlanning(t *testing.T, ctx context.Context, cmd *exec.Cmd, root, binary, id, checkout string) []byte {
+	t.Helper()
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	release := filepath.Join(root, "release-pm")
+	defer os.WriteFile(release, nil, 0600) // always unblock the fixture, including failure cleanup
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(filepath.Join(root, "pm-started")); err == nil {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("PM did not start")
+		case <-ticker.C:
+		}
+	}
+	second := exec.CommandContext(ctx, binary, "--home", root, "--project", id, "--plain", "--once", "--yes")
+	second.Env = cmd.Env
+	refused, err := second.CombinedOutput()
+	if err == nil || !strings.Contains(string(refused), "another build loop is active") {
+		t.Fatalf("second build not refused: %s %v", refused, err)
+	}
+	live, active, err := lanes.Active(root)
+	if err != nil || !active || live.CLI != "claude" {
+		t.Fatalf("PM lane %+v %v %v", live, active, err)
+	}
+	if lanes.Warning("claude", live, active) == "" {
+		t.Fatal("missing usage warning")
+	}
+	companionBin := filepath.Join(t.TempDir(), "claude")
+	script := `#!/bin/sh
+case "$*" in *'--setting-sources user'*) ;; *) exit 1;; esac
+cat >/dev/null
+echo '{"type":"result","subtype":"success","session_id":"planning-Y","result":"Drafting project Y while project X PM is running."}'
+`
+	if err := os.WriteFile(companionBin, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	cli := agents.Claude()
+	cli.Binary = companionBin
+	planner := companion.Agent{Choice: agents.Choice{CLI: cli}, Dir: checkout, Home: root, Sessions: session.NewCompanion(root, "planning-Y", 0), Run: runner.Run, Now: time.Now}
+	reply, err := planner.Ask(ctx, "Project Y planning", "Draft the next milestone for Y")
+	if err != nil || !strings.Contains(reply, "project Y") {
+		t.Fatalf("planning blocked: %s %v", reply, err)
+	}
+	if _, active, err := lanes.Active(root); err != nil || !active {
+		t.Fatal("planning disturbed PM lane")
+	}
+	if err := os.WriteFile(release, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("PM failed: %s %v", output.String(), err)
+	}
+	t.Logf("Concurrent sandbox evidence: second build refused; companion Y answered while PM X ran; warning: %s", lanes.Warning("claude", live, true))
+	return output.Bytes()
 }

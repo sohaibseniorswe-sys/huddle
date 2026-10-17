@@ -36,6 +36,7 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/config"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gitx"
+	"github.com/sohaibseniorswe-sys/huddle/internal/lanes"
 	"github.com/sohaibseniorswe-sys/huddle/internal/lifecycle"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
 	"github.com/sohaibseniorswe-sys/huddle/internal/runner"
@@ -587,6 +588,7 @@ func (s starter) runPlain(ctx context.Context, in *bufio.Reader, reopened *gh.Is
 // raw output (nil on the run screen, where nothing may write to the
 // terminal but the screen). The caller sets Report and Controls.
 func (s starter) newLoop(control gh.Issue, stream io.Writer) *loop.Loop {
+	var lease *lanes.Lease
 	return &loop.Loop{
 		Control:       gh.Control{Client: s.d.gh, Repo: s.target, Number: control.Number},
 		Milestone:     control.Milestone,
@@ -597,7 +599,24 @@ func (s starter) newLoop(control gh.Issue, stream io.Writer) *loop.Loop {
 		Clock:         s.d.clock,
 		Once:          s.opts.once,
 		FreshSessions: s.freshSessions,
-		BeforeTurn: func(ctx context.Context, _ session.Role) error {
+		Acquire: func(_ context.Context) (func(), error) {
+			acquired, err := lanes.Acquire(s.home, s.projectID)
+			if err != nil {
+				return nil, err
+			}
+			lease = acquired
+			return func() {
+				if err := acquired.Close(); err != nil {
+					fmt.Fprintf(s.d.stderr, "release build lane: %v\n", err)
+				}
+			}, nil
+		},
+		BeforeTurn: func(ctx context.Context, role session.Role) error {
+			if lease != nil {
+				if err := lease.SetCLI(s.team.For(role).CLI.ID); err != nil {
+					return err
+				}
+			}
 			if !s.freshSessions {
 				return nil
 			}
@@ -705,12 +724,18 @@ func (s starter) screenConfig(control gh.Issue) app.Config {
 		memoryKey = s.projectID
 	}
 	userHome, _ := d.lookupEnv("HOME")
+	live, active, laneErr := lanes.Active(s.home)
+	warning := lanes.Warning(s.team.Companion.CLI.ID, live, active)
+	if laneErr != nil {
+		warning = "Could not inspect build usage: " + laneErr.Error()
+	}
 	return app.Config{
-		ProjectID: s.projectID,
-		Repo:      s.target,
-		Milestone: control.Milestone,
-		Control:   gh.Control{Client: d.gh, Repo: s.target, Number: control.Number},
-		Team:      s.team,
+		LaneWarning: warning,
+		ProjectID:   s.projectID,
+		Repo:        s.target,
+		Milestone:   control.Milestone,
+		Control:     gh.Control{Client: d.gh, Repo: s.target, Number: control.Number},
+		Team:        s.team,
 		Settings: app.Settings{
 			Home:               s.home,
 			UserHome:           userHome,

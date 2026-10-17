@@ -83,10 +83,11 @@ type Companion interface {
 
 // Config is what the run screen needs to know about the run.
 type Config struct {
-	ProjectID string     // stable registry identity; independent of optional Repo
-	Repo      string     // the target repo, "owner/name"
-	Milestone string     // the milestone being worked on
-	Control   gh.Control // the control issue, for the facts and decisions
+	LaneWarning string     // nonblocking shared-CLI usage warning
+	ProjectID   string     // stable registry identity; independent of optional Repo
+	Repo        string     // the target repo, "owner/name"
+	Milestone   string     // the milestone being worked on
+	Control     gh.Control // the control issue, for the facts and decisions
 	// Controls pauses, resumes and wakes the loop.
 	Controls *loop.Controls
 	// Stop cancels the loop's context: the running agent is killed and the
@@ -262,6 +263,9 @@ func New(cfg Config) Model {
 		if err != nil {
 			m.chat = append(m.chat, companion.Entry{Time: now, Who: companion.WhoHuddle, Text: err.Error()})
 		}
+	}
+	if cfg.LaneWarning != "" {
+		m = m.addEvent(m.huddleEvent(cfg.LaneWarning))
 	}
 	return m
 }
