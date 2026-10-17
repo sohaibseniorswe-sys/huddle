@@ -463,3 +463,11 @@ available while the build is running, paused, or waiting for usage. If the
 companion shares the running agent's CLI, Huddle warns about usage contention
 without blocking planning. Store commits are serialized independently; registry
 updates do not commit unfinished draft edits.
+
+V4 planning asks the read-only companion for a README and issue spec package.
+Huddle saves the conversation and draft under `huddle-data/drafts/<project-id>/`
+and commits at response checkpoints. Reopening reloads the draft and recent
+conversation even without the original CLI session. The embedded Milestone Spec
+Standard checks required sections, acceptance evidence, workflow instructions,
+and dependency cycles. Incomplete drafts remain editable; validation problems
+must be fixed before publishing. Drafting itself writes nothing to GitHub.

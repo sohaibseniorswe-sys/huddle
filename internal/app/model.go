@@ -58,6 +58,7 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/companion"
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
+	"github.com/sohaibseniorswe-sys/huddle/internal/planning"
 	"github.com/sohaibseniorswe-sys/huddle/internal/start"
 	"github.com/sohaibseniorswe-sys/huddle/internal/ui"
 )
@@ -83,11 +84,12 @@ type Companion interface {
 
 // Config is what the run screen needs to know about the run.
 type Config struct {
-	LaneWarning string     // nonblocking shared-CLI usage warning
-	ProjectID   string     // stable registry identity; independent of optional Repo
-	Repo        string     // the target repo, "owner/name"
-	Milestone   string     // the milestone being worked on
-	Control     gh.Control // the control issue, for the facts and decisions
+	Draft       *planning.Workspace // v4 planning store; nil retains legacy plan behavior
+	LaneWarning string              // nonblocking shared-CLI usage warning
+	ProjectID   string              // stable registry identity; independent of optional Repo
+	Repo        string              // the target repo, "owner/name"
+	Milestone   string              // the milestone being worked on
+	Control     gh.Control          // the control issue, for the facts and decisions
 	// Controls pauses, resumes and wakes the loop.
 	Controls *loop.Controls
 	// Stop cancels the loop's context: the running agent is killed and the

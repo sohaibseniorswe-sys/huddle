@@ -115,3 +115,23 @@ One entry per issue: start/finish time, what was built, deviations from the spec
   isolation; metadata alone never establishes liveness.
 - Deviations: Windows cross-compile used a temporary output artifact, removed
   after checking; no production binary touched. Human needed: none.
+
+## v4.07 — #19 companion-driven planning drafts
+
+- Start: 2026-10-16 20:43 EDT. Finish: 2026-10-16 20:48 EDT.
+- Built: embedded Milestone Spec Standard, typed JSON draft package, required
+  section/process-language/dependency checks, exact reviewable Markdown specs,
+  portable planning history, response checkpoints and durable context reload.
+  Malformed candidates also persist for repair. Removed specs leave no stale
+  rendered files. V4 rejects the old direct plan-publish protocol.
+- Tests: good/bad fixtures (missing/empty sections, process instructions, unknown
+  dependencies, duplicate deps, cycles, unsafe IDs), stable dependency order,
+  clone-to-fresh-root conversation/draft resume, and app no-GitHub-write checks.
+- REAL sandbox planning: a real Claude read-only companion returned a valid
+  one-issue spec package, saved/resumed successfully; sandbox checkout unchanged;
+  process logs verified `--setting-sources user`. Transcript in
+  `docs/v4/evidence/07-planning.md`; opt-in reproduction command there.
+- Validation: full Go tests, vet, v4 build. No new external dependencies.
+- Technical choice: checkpoint whole responses, retaining incomplete drafts for
+  editing; only publish will require a clean validation result.
+- Deviations: none. Human needed: none.

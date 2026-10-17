@@ -55,11 +55,12 @@ const humanHeader = "THE HUMAN SAYS:"
 
 // Agent runs the companion. Its zero value is not usable: set every field.
 type Agent struct {
-	Choice    agents.Choice // the CLI, model and effort that play the companion
-	Dir       string        // the repo's local clone; the companion runs there
-	Home      string        // the home directory, for ~/.huddle/logs/companion
-	Milestone string        // filled into the instructions
-	Sessions  session.Store // the companion's session file (session.NewCompanion)
+	Instructions string        // optional v4 protocol; access restrictions remain in agents.Command
+	Choice       agents.Choice // the CLI, model and effort that play the companion
+	Dir          string        // the repo's local clone; the companion runs there
+	Home         string        // the home directory, for ~/.huddle/logs/companion
+	Milestone    string        // filled into the instructions
+	Sessions     session.Store // the companion's session file (session.NewCompanion)
 	// Run runs one agent process. It is runner.Run outside tests.
 	Run func(ctx context.Context, spec runner.Spec) (runner.Result, error)
 	// Now is the clock, for log file names. It is time.Now outside tests.
@@ -97,7 +98,11 @@ func (a Agent) Ask(ctx context.Context, contextBlock, message string) (string, e
 func (a Agent) ask(ctx context.Context, id, contextBlock, message string) (string, error) {
 	prompt := contextBlock + "\n\n" + humanHeader + "\n" + message + "\n"
 	if id == "" {
-		prompt = Instructions(a.Milestone) + "\n\n" + prompt
+		instructions := Instructions(a.Milestone)
+		if a.Instructions != "" {
+			instructions = a.Instructions
+		}
+		prompt = instructions + "\n\n" + prompt
 	}
 	logPath := LogPath(a.Home, a.Now())
 	lastMessage := strings.TrimSuffix(logPath, ".log") + ".last"

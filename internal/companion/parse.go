@@ -14,7 +14,8 @@ type Reply struct {
 	Action   string // a proposed Huddle action: "pause", "resume", "status" or "log HH:MM"; "" if none
 	// Plan is the text inside a <plan> block, line breaks kept, for
 	// start.ParsePlan; "" if none.
-	Plan string
+	Draft string // JSON package returned to Huddle for local persistence
+	Plan  string
 }
 
 // The tags Parse looks for. (?s) lets "." match line breaks too, so a tag
@@ -23,6 +24,7 @@ var (
 	decisionRe = regexp.MustCompile(`(?s)<decision>(.*?)</decision>`)
 	reasonRe   = regexp.MustCompile(`(?s)<reason>(.*?)</reason>`)
 	actionRe   = regexp.MustCompile(`(?s)<action>(.*?)</action>`)
+	draftRe    = regexp.MustCompile(`(?s)<draft>(.*?)</draft>`)
 	planRe     = regexp.MustCompile(`(?s)<plan>(.*?)</plan>`)
 	// actionNameRe is the list of actions the instructions allow.
 	actionNameRe = regexp.MustCompile(`^(pause|resume|status|log [0-2]?[0-9]:[0-5][0-9])$`)
@@ -57,10 +59,18 @@ func Parse(reply string) Reply {
 			// Unlike the others, a plan keeps its lines: they are its format.
 			r.Plan = strings.TrimSpace(all[len(all)-1][1])
 		}
-		for _, re := range []*regexp.Regexp{decisionRe, reasonRe, actionRe, planRe} {
+		if all := draftRe.FindAllStringSubmatch(part, -1); len(all) > 0 {
+			r.Draft = strings.TrimSpace(all[len(all)-1][1])
+		}
+		for _, re := range []*regexp.Regexp{decisionRe, reasonRe, actionRe, planRe, draftRe} {
 			part = re.ReplaceAllString(part, "")
 		}
 		text.WriteString(part)
+	}
+	if r.Draft != "" {
+		r.Plan = ""
+		r.Decision = ""
+		r.Action = ""
 	}
 	if r.Plan != "" {
 		r.Decision = ""

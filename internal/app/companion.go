@@ -14,6 +14,7 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/gh"
 	"github.com/sohaibseniorswe-sys/huddle/internal/lanes"
 	"github.com/sohaibseniorswe-sys/huddle/internal/loop"
+	"github.com/sohaibseniorswe-sys/huddle/internal/planning"
 	"github.com/sohaibseniorswe-sys/huddle/internal/runner"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
 	"github.com/sohaibseniorswe-sys/huddle/internal/ui"
@@ -154,12 +155,23 @@ func (m Model) handleCompanionReply(msg companionReplyMsg) (Model, tea.Cmd) {
 		}
 		m = m.addChat(companion.Entry{Time: now, Who: companion.WhoCompanion, Text: text})
 		switch {
+		case r.Draft != "":
+			m = m.takeDraft(r.Draft)
 		case r.Plan != "":
-			m = m.takePlan(r.Plan)
+			if m.cfg.Draft != nil {
+				m = m.addChat(companion.Entry{Time: now, Who: companion.WhoHuddle, Text: "V4 plans must use the spec-standard <draft> package. Nothing was published."})
+			} else {
+				m = m.takePlan(r.Plan)
+			}
 		case r.Decision != "":
 			m = m.showCard(card{kind: cardDecision, text: r.Decision, reason: r.Reason})
 		case r.Action != "":
 			m = m.showCard(card{kind: cardAction, text: r.Action})
+		}
+	}
+	if m.cfg.Draft != nil {
+		if err := m.cfg.Draft.Checkpoint(context.Background()); err != nil {
+			m = m.addChat(companion.Entry{Time: now, Who: companion.WhoHuddle, Text: "Planning checkpoint failed: " + err.Error()})
 		}
 	}
 	if m.quitting || len(m.queue) == 0 && !m.queuePM {
@@ -266,7 +278,11 @@ func (m Model) askCompanion(message string, pmQuestion bool) tea.Cmd {
 	}
 	return func() tea.Msg {
 		ghCtx, cancel := context.WithTimeout(ctx, githubTimeout)
-		comments, err := control.Client.Comments(ghCtx, control.Repo, control.Number)
+		var comments []gh.Comment
+		var err error
+		if control.Number > 0 {
+			comments, err = control.Client.Comments(ghCtx, control.Repo, control.Number)
+		}
 		cancel()
 		if err != nil {
 			info.Comments = []string{"could not read the control issue: " + err.Error()}
@@ -281,7 +297,15 @@ func (m Model) askCompanion(message string, pmQuestion bool) tea.Cmd {
 		if agentRunning && len(runs) > 0 {
 			info.AgentOutput = logTail(runs[len(runs)-1].path, companion.AgentOutputLines)
 		}
-		reply, err := talker.Ask(ctx, info.String(), message)
+		contextBlock := info.String()
+		if m.cfg.Draft != nil {
+			draftContext, err := m.cfg.Draft.Context()
+			if err != nil {
+				return companionReplyMsg{err: err}
+			}
+			contextBlock += "\n" + draftContext
+		}
+		reply, err := talker.Ask(ctx, contextBlock, message)
 		return companionReplyMsg{reply: reply, err: err}
 	}
 }
@@ -500,4 +524,35 @@ func (m Model) decisionsText() string {
 		text = append([]rune(strings.TrimSpace(string(text[:57]))), '…')
 	}
 	return fmt.Sprintf("%d agreed · last %s %s", n, last.Time.In(m.now.Location()).Format("15:04"), string(text))
+}
+
+// takeDraft persists editable content and reports standard checks without GitHub writes.
+func (m Model) takeDraft(text string) Model {
+	if m.cfg.Draft == nil {
+		return m.addChat(companion.Entry{Time: m.cfg.Now(), Who: companion.WhoHuddle, Text: "No v4 planning workspace is open."})
+	}
+	if err := m.cfg.Draft.SaveCandidate(text); err != nil {
+		return m.addChat(companion.Entry{Time: m.cfg.Now(), Who: companion.WhoHuddle, Text: "Draft candidate could not be saved: " + err.Error()})
+	}
+	d, err := planning.Parse(text)
+	if err == nil {
+		err = m.cfg.Draft.Save(context.Background(), d)
+	}
+	if err != nil {
+		return m.addChat(companion.Entry{Time: m.cfg.Now(), Who: companion.WhoHuddle, Text: "Draft could not be saved: " + err.Error()})
+	}
+	problems := d.Check()
+	note := fmt.Sprintf("Draft saved: %s (%d issues). Spec-standard checks passed. Nothing has been published.", d.Title, len(d.Issues))
+	if len(problems) > 0 {
+		var parts []string
+		for _, p := range problems {
+			parts = append(parts, p.String())
+		}
+		note = "Draft saved; fix before publish: " + strings.Join(parts, "; ")
+	}
+	m = m.addChat(companion.Entry{Time: m.cfg.Now(), Who: companion.WhoHuddle, Text: note})
+	m.planText = d.Text()
+	m.view = viewPlan
+	m.focus = focusActivity
+	return m.sync()
 }
