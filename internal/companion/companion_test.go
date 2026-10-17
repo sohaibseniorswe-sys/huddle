@@ -77,7 +77,7 @@ func TestAskStartsThenResumesASession(t *testing.T) {
 	if strings.Contains(strings.Join(first.Args, " "), "--resume") {
 		t.Error("the first message must start a fresh session")
 	}
-	if !strings.Contains(first.LogPath, ".huddle/logs/companion/20261014-000200.000-companion.log") {
+	if !strings.Contains(first.LogPath, "logs/companion/20261014-000200.000-companion.log") {
 		t.Errorf("LogPath = %q", first.LogPath)
 	}
 

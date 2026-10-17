@@ -25,7 +25,8 @@ const settingsFooter = "Read-only. To change settings, quit and run: huddle setu
 
 // Settings is what /settings shows besides what Config already holds.
 type Settings struct {
-	Home     string // the home directory, to show paths as ~/...
+	UserHome string // OS home, used only for displaying paths
+	Home     string // the resolved state root
 	Path     string // the project's config file
 	Exists   bool   // false: there is no file yet and the defaults are used
 	Autonomy int
@@ -211,7 +212,10 @@ func shortID(id string) string {
 
 // tilde shortens a path under the home directory to start with "~".
 func (m Model) tilde(path string) string {
-	home := m.cfg.Settings.Home
+	home := m.cfg.Settings.UserHome
+	if home == "" {
+		home = m.cfg.Settings.Home
+	}
 	if home == "" {
 		return path
 	}

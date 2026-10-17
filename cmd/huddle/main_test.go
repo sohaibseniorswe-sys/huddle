@@ -267,6 +267,7 @@ func TestStartupResumeOnceRunsOneTurn(t *testing.T) {
 		t.Errorf("agents run in %q, want the repo root %q", gotDir, dir)
 	}
 	home, _ := d.lookupEnv("HOME")
+	home = filepath.Join(home, ".huddle")
 	if gotHome != home {
 		t.Errorf("home = %q", gotHome)
 	}
@@ -364,8 +365,9 @@ func TestRunScreenOrPlain(t *testing.T) {
 				t.Error("run screen: the agents' raw output must not reach the terminal")
 			}
 			home, _ := d.lookupEnv("HOME")
+			home = filepath.Join(home, ".huddle")
 			if cfg.Repo != sandbox || cfg.Milestone != "Sandbox M1" || cfg.Control.Number != 3 ||
-				cfg.LogDir != filepath.Join(home, ".huddle", "logs") || cfg.Now == nil {
+				cfg.LogDir != filepath.Join(home, "logs") || cfg.Now == nil {
 				t.Errorf("run screen config = %+v", cfg)
 			}
 		})
@@ -379,6 +381,7 @@ func TestSettingsFileChoosesTheAgents(t *testing.T) {
 	dir := gitRepo(t, "https://github.com/"+sandbox)
 	d, stdout, stderr := testDeps(t, dir, nil, "")
 	home, _ := d.lookupEnv("HOME")
+	home = filepath.Join(home, ".huddle")
 	c := config.Default(sandbox)
 	c.Agents.Dev = config.Agent{CLI: "claude", Model: "sonnet", Effort: "high"}
 	c.Agents.PM = config.Agent{CLI: "claude", Model: "opus"}
@@ -405,7 +408,7 @@ func TestSettingsFileChoosesTheAgents(t *testing.T) {
 	if strings.Join(checked, ",") != "claude" {
 		t.Errorf("checked CLIs %v, want only claude: codex plays no role", checked)
 	}
-	for _, want := range []string{"✔ settings ~/.huddle/projects/sohaibseniorswe-sys_huddle-sandbox.yaml",
+	for _, want := range []string{"✔ settings ~/.huddle/huddle-data/config/f57e949cf60ad49d15a887e4944e17c2.yaml",
 		"Dev: Claude Code · sonnet · high; PM: Claude Code · opus · CLI default effort",
 		"turn 1: Dev (Claude Code), fresh session"} {
 		if !strings.Contains(stdout.String(), want) {
@@ -418,6 +421,7 @@ func TestInvalidSettingsStopTheStart(t *testing.T) {
 	dir := gitRepo(t, "https://github.com/"+sandbox)
 	d, _, stderr := testDeps(t, dir, nil, "")
 	home, _ := d.lookupEnv("HOME")
+	home = filepath.Join(home, ".huddle")
 	c := config.Default(sandbox)
 	c.Agents.PM.Effort = "none" // a Codex effort, not Claude Code's
 	if err := config.Save(home, c); err != nil {
@@ -437,6 +441,7 @@ func TestInvalidSettingsStopTheStart(t *testing.T) {
 func saveSettings(t *testing.T, d deps, repo string) {
 	t.Helper()
 	home, _ := d.lookupEnv("HOME")
+	home = filepath.Join(home, ".huddle")
 	if err := config.Save(home, config.Default(repo)); err != nil {
 		t.Fatal(err)
 	}
@@ -458,7 +463,7 @@ func TestFirstRunOpensTheWizardThenSkipsIt(t *testing.T) {
 	if code := run(context.Background(), []string{"--repo", sandbox, "--plan"}, d); code != 0 {
 		t.Fatalf("first run: exit %d, stderr: %s", code, stderr.String())
 	}
-	if calls != 1 || !strings.Contains(stdout.String(), "✔ settings saved to ~/.huddle/projects/sohaibseniorswe-sys_huddle-sandbox.yaml") {
+	if calls != 1 || !strings.Contains(stdout.String(), "✔ settings saved to ~/.huddle/huddle-data/config/f57e949cf60ad49d15a887e4944e17c2.yaml") {
 		t.Fatalf("wizard ran %d times; output:\n%s", calls, stdout)
 	}
 	// The next start finds the file: no wizard, even with --plain.
@@ -473,6 +478,7 @@ func TestFirstRunOpensTheWizardThenSkipsIt(t *testing.T) {
 func TestSetupRunsTheWizardWithTheCurrentSettings(t *testing.T) {
 	d, stdout, _ := testDeps(t, t.TempDir(), nil, "")
 	home, _ := d.lookupEnv("HOME")
+	home = filepath.Join(home, ".huddle")
 	c := config.Default(sandbox)
 	c.Autonomy = 3
 	c.Agents.Dev.Effort = "high"
@@ -604,6 +610,7 @@ func TestAutonomyFlag(t *testing.T) {
 			dir := gitRepo(t, "https://github.com/"+sandbox)
 			d, stdout, stderr := testDeps(t, dir, nil, "")
 			home, _ := d.lookupEnv("HOME")
+			home = filepath.Join(home, ".huddle")
 			c := config.Default(sandbox)
 			c.Autonomy = 6
 			if err := config.Save(home, c); err != nil {

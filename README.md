@@ -411,3 +411,17 @@ For example `You've hit your weekly limit · resets Oct 15, 10am (Europe/London)
 ## macOS
 
 CI runs `gofmt`, `go vet` and `go test` on `ubuntu-latest` and `macos-15-intel` (the arm64 `macos-latest` runners could not be had in October 2026; their jobs were cancelled unstarted). Huddle's Unix-specific code (a process group per agent with `Setpgid`, killed with `kill(-pid, SIGKILL)`; SIGTERM handling) is the same on macOS. The one Linux-only piece was in a test: the runner tests read `/proc/<pid>/stat` to see whether a process was still alive, which on macOS made the check always pass. They now ask `ps -o stat=`, which works on both.
+
+### v4 state and portable project registry
+
+Use `HUDDLE_HOME=/path/to/state` or `huddle --home /path/to/state` to isolate an
+instance (`--home` wins). The default is `$HOME/.huddle`. Logs, sessions and
+queues stay under that root. Project records and settings live in its
+`huddle-data` Git repository; changes are committed locally immediately.
+`--data-remote <git-url>` clones an existing store into a fresh root. Huddle
+only performs Git operations on its own store; agents own project repositories.
+
+On first open, legacy `projects/*.yaml` files under the selected state root are
+copied without changing their contents into `huddle-data/config/<id>.yaml`,
+registered by stable internal ID, and backed up in `migration-backup/`.
+Migration is safe to repeat. Original files remain available as a backup.

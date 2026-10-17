@@ -337,7 +337,7 @@ func newSettingsFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := newFixture(t)
 	home := t.TempDir()
-	logDir := filepath.Join(home, ".huddle", "logs")
+	logDir := filepath.Join(home, "logs")
 	logs := map[string]string{
 		"20261013-204000-turn5-dev.log": "20:40:00  # huddle: codex exec --strict-config - in " + testRepoDir + " at 2026-10-13T20:40:00Z\n" +
 			"20:40:01  OpenAI Codex v0.160.0\n20:40:01  model: gpt-6.1-sol\n20:40:01  session id: 01a13bd6-ec1a-7580-8fef-eaf9c06ef981\n",
@@ -365,7 +365,7 @@ func newSettingsFixture(t *testing.T) *fixture {
 	f.m.cfg.Team.Companion = f.m.cfg.Team.PM
 	f.m.cfg.Settings = Settings{
 		Home:               home,
-		Path:               filepath.Join(home, ".huddle", "projects", "sohaibseniorswe-sys_palantir.yaml"),
+		Path:               filepath.Join(home, "huddle-data", "config", "a6bae8fd25bbe1d1848841ef1697b101.yaml"),
 		Exists:             true,
 		Autonomy:           8,
 		CompanionFollowsPM: true,

@@ -156,13 +156,13 @@ func Run(ctx context.Context, spec Spec) (Result, error) {
 	return res, nil
 }
 
-// LogDir returns the directory of the agents' log files, <home>/.huddle/logs.
+// LogDir returns the directory of the agents' log files, <root>/logs.
 func LogDir(home string) string {
-	return filepath.Join(home, ".huddle", "logs")
+	return filepath.Join(home, "logs")
 }
 
 // LogPath returns the log file path for a turn:
-// <home>/.huddle/logs/<timestamp>-turn<N>-<role>.log.
+// <root>/logs/<timestamp>-turn<N>-<role>.log.
 func LogPath(home string, t time.Time, turn int, role string) string {
 	name := fmt.Sprintf("%s-turn%d-%s.log", t.Format("20060102-150405"), turn, role)
 	return filepath.Join(LogDir(home), name)

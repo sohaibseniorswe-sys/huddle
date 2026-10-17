@@ -52,7 +52,7 @@ func (ids *IDs) set(role Role, id string) {
 }
 
 // Store is the session file for one control issue:
-// <home>/.huddle/sessions/<owner>_<repo>_<control-issue>.json.
+// <root>/sessions/<owner>_<repo>_<control-issue>.json.
 type Store struct {
 	Path string
 }
@@ -60,11 +60,11 @@ type Store struct {
 // New returns the Store for control issue number issue on repo ("owner/name").
 func New(home, repo string, issue int) Store {
 	name := fmt.Sprintf("%s_%d.json", strings.ReplaceAll(repo, "/", "_"), issue)
-	return Store{Path: filepath.Join(home, ".huddle", "sessions", name)}
+	return Store{Path: filepath.Join(home, "sessions", name)}
 }
 
 // NewCompanion returns the Store for the companion's session on control
-// issue number issue: <home>/.huddle/sessions/<owner>_<repo>_<issue>_companion.json,
+// issue number issue: <root>/sessions/<owner>_<repo>_<issue>_companion.json,
 // next to the Dev and PM file.
 //
 // The companion has a file of its own because it runs at the same time as
@@ -73,7 +73,7 @@ func New(home, repo string, issue int) Store {
 // one of the two new ids could be lost.
 func NewCompanion(home, repo string, issue int) Store {
 	name := fmt.Sprintf("%s_%d_companion.json", strings.ReplaceAll(repo, "/", "_"), issue)
-	return Store{Path: filepath.Join(home, ".huddle", "sessions", name)}
+	return Store{Path: filepath.Join(home, "sessions", name)}
 }
 
 // Load returns the saved ids. A missing or unreadable file means no sessions.

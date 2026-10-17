@@ -40,6 +40,8 @@ import (
 	"github.com/sohaibseniorswe-sys/huddle/internal/runner"
 	"github.com/sohaibseniorswe-sys/huddle/internal/session"
 	"github.com/sohaibseniorswe-sys/huddle/internal/start"
+	"github.com/sohaibseniorswe-sys/huddle/internal/state"
+	"github.com/sohaibseniorswe-sys/huddle/internal/store"
 	"github.com/sohaibseniorswe-sys/huddle/internal/wizard"
 )
 
@@ -96,12 +98,14 @@ func main() {
 }
 
 type options struct {
-	setup   bool // `huddle setup`: run the setup wizard
-	version bool
-	yes     bool
-	once    bool
-	plain   bool
-	repo    string
+	home       string
+	dataRemote string
+	setup      bool // `huddle setup`: run the setup wizard
+	version    bool
+	yes        bool
+	once       bool
+	plain      bool
+	repo       string
 	// autonomy is --autonomy, the level for this run only; autonomySet
 	// says whether the flag was given at all, because 0 is a valid level.
 	autonomy    int
@@ -116,6 +120,8 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	var o options
 	fs := flag.NewFlagSet("huddle", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fs.StringVar(&o.home, "home", "", "state root (overrides HUDDLE_HOME)")
+	fs.StringVar(&o.dataRemote, "data-remote", "", "huddle-data git remote to clone when absent")
 	fs.BoolVar(&o.version, "version", false, "print the version and exit")
 	fs.BoolVar(&o.yes, "yes", false, "skip the confirmation prompt")
 	fs.BoolVar(&o.once, "once", false, "run a single turn, then stop (with --plain: exit)")
@@ -208,9 +214,12 @@ func run(ctx context.Context, args []string, d deps) int {
 
 	// The project's settings: which CLI plays each role. Without a
 	// settings file, or with `huddle setup`, the wizard writes one first.
-	home, hasHome := d.lookupEnv("HOME")
-	if !hasHome || home == "" {
-		return fail(errors.New("HOME is not set"))
+	home, err := state.Resolve(opts.home, d.lookupEnv)
+	if err != nil {
+		return fail(err)
+	}
+	if _, err := store.Open(ctx, home, opts.dataRemote); err != nil {
+		return fail(err)
 	}
 	settingsPath := tildePath(config.Path(home, target), d.lookupEnv)
 	cfg, exists, err := config.Load(home, target)
@@ -507,6 +516,7 @@ func (s starter) choose(ctx context.Context, queue start.Queue) (cfg app.Config,
 // of their own, numbered 0.
 func (s starter) screenConfig(control gh.Issue) app.Config {
 	d := s.d
+	userHome, _ := d.lookupEnv("HOME")
 	return app.Config{
 		Repo:      s.target,
 		Milestone: control.Milestone,
@@ -514,6 +524,7 @@ func (s starter) screenConfig(control gh.Issue) app.Config {
 		Team:      s.team,
 		Settings: app.Settings{
 			Home:               s.home,
+			UserHome:           userHome,
 			Path:               config.Path(s.home, s.target),
 			Exists:             s.exists,
 			Autonomy:           s.cfg.Autonomy,

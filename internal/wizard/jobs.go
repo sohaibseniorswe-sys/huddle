@@ -70,7 +70,11 @@ func (m Model) checkFolder(path string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), jobTimeout)
 		defer cancel()
-		path = expandHome(strings.TrimSpace(path), deps.Home)
+		userHome, _ := deps.LookupEnv("HOME")
+		if userHome == "" {
+			userHome = deps.Home
+		}
+		path = expandHome(strings.TrimSpace(path), userHome)
 		if path == "" {
 			return folderMsg{err: errors.New("type the folder of the project's git clone")}
 		}

@@ -9,7 +9,7 @@ import (
 
 func TestHistoryPath(t *testing.T) {
 	got := NewHistory("/home/u", "sohaibseniorswe-sys/palantir", 58).Path
-	if want := "/home/u/.huddle/companion/sohaibseniorswe-sys_palantir_58.jsonl"; got != want {
+	if want := "/home/u/companion/sohaibseniorswe-sys_palantir_58.jsonl"; got != want {
 		t.Errorf("Path = %q, want %q", got, want)
 	}
 }

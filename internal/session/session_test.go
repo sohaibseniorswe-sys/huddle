@@ -8,7 +8,7 @@ import (
 
 func TestNewPath(t *testing.T) {
 	got := New("/home/u", "sohaibseniorswe-sys/palantir", 58).Path
-	if want := "/home/u/.huddle/sessions/sohaibseniorswe-sys_palantir_58.json"; got != want {
+	if want := "/home/u/sessions/sohaibseniorswe-sys_palantir_58.json"; got != want {
 		t.Errorf("Path = %q, want %q", got, want)
 	}
 }
@@ -28,7 +28,7 @@ func TestRoundTrip(t *testing.T) {
 	if err := s.Save(Dev, "codex-2"); err != nil {
 		t.Fatal(err)
 	}
-	ids := New(filepath.Dir(filepath.Dir(filepath.Dir(s.Path))), "o/r", 3).Load()
+	ids := New(filepath.Dir(filepath.Dir(s.Path)), "o/r", 3).Load()
 	if ids.Get(Dev) != "codex-2" || ids.Get(PM) != "claude-1" {
 		t.Errorf("Load() after replace = %+v", ids)
 	}
@@ -101,7 +101,7 @@ func TestForget(t *testing.T) {
 func TestCompanionHasItsOwnFile(t *testing.T) {
 	home := t.TempDir()
 	c := NewCompanion(home, "sohaibseniorswe-sys/palantir", 58)
-	if want := filepath.Join(home, ".huddle/sessions/sohaibseniorswe-sys_palantir_58_companion.json"); c.Path != want {
+	if want := filepath.Join(home, "sessions/sohaibseniorswe-sys_palantir_58_companion.json"); c.Path != want {
 		t.Errorf("Path = %q, want %q", c.Path, want)
 	}
 	if err := c.Save(Companion, "talk-1"); err != nil {
