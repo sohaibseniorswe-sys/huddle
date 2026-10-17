@@ -269,3 +269,26 @@ uses the same private repo and a second isolated root, including recovery of the
 already-created remote. Its first attempt hit a duplicate fixture milestone title
 (HTTP 422); the fixture now uses a unique title, and retry retains the completed
 setup. No second repo was created. Final result recorded below.
+
+
+## v4.12 final acceptance — #24
+Start: 2026-10-17 04:33 UTC. #21 implementation merged in #37 (c518e52), with
+Linux/macOS CI green. Finishing lifecycle/fresh-machine notes and legacy proof.
+Finish: 2026-10-17 04:35 UTC. REAL corrected bootstrap run reused the single
+private repo `huddle-sandbox-new-20261017-0427`, resumed the completed setup after
+a duplicate fixture milestone title was corrected, and passed the full lifecycle
+in 47.67s. New bootstrap instruction starters existed before launch; the harness
+preserved them. Controls #6 → done and #8 N+1; fresh clone listed both stable ids
+with correct then-current statuses. Repo archived again; no additional repo.
+Evidence: `12-new-project-lifecycle.md`, with the v4.09 masking correction added
+to `09-new-project.md`. Prior adopted evidence remains separately identified.
+REAL legacy direct `--repo --resume` sandbox run: PM session preserved, actual
+Claude argv contained `--resume legacy-pm-checkpoint`; control #72 handed back to
+dev-ready, fixture closed. `12-regression.md` contains output; listing regression
+includes Palantir as an ordinary cached registry entry, without a live run.
+User guide/README reflect implemented flow; outdated acceptance blocker removed.
+Full Go tests, vet, gofmt/diff checks and canonical build run on the final tree;
+Linux/macOS PR CI must pass before merge. Existing limits remain: no C compiler
+for race, full Windows app unsupported by the pre-existing Unix-only runner,
+headless terminal clipboard transport verified without a desktop paste target.
+Human needed: none. Dev will leave #25 open for PM final review.

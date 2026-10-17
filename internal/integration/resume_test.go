@@ -28,13 +28,15 @@ const sandbox = "sohaibseniorswe-sys/huddle-sandbox"
 // TestSandboxResume runs the real binary and GitHub control loop against a
 // throwaway sandbox milestone. Agent processes are scripted so this verifies
 // orchestration, not model quality, and never starts autonomous work in the repo.
-func TestSandboxResume(t *testing.T) { sandboxResume(t, false, false) }
+func TestSandboxResume(t *testing.T) { sandboxResume(t, false, false, false) }
 
-func TestSandboxFreshIssueSessions(t *testing.T) { sandboxResume(t, true, false) }
+func TestSandboxFreshIssueSessions(t *testing.T) { sandboxResume(t, true, false, false) }
 
-func TestSandboxConcurrentPlanning(t *testing.T) { sandboxResume(t, false, true) }
+func TestSandboxConcurrentPlanning(t *testing.T) { sandboxResume(t, false, true, false) }
 
-func sandboxResume(t *testing.T, multi, concurrent bool) {
+func TestSandboxLegacyResume(t *testing.T) { sandboxResume(t, false, false, true) }
+
+func sandboxResume(t *testing.T, multi, concurrent, legacy bool) {
 	if os.Getenv("HUDDLE_V4_SANDBOX") != "1" {
 		t.Skip("set HUDDLE_V4_SANDBOX=1; requires sandbox access and built ./bin/huddle-v4")
 	}
@@ -157,6 +159,13 @@ printf 'session id: sandbox-fresh-session\n' >&2
 		}
 	}
 	cmd = exec.CommandContext(ctx, binary, "--home", root, "--project", p.ID, "--plain", "--once", "--yes")
+	if legacy {
+		if err := session.New(root, sandbox, control).Save(session.PM, "legacy-pm-checkpoint"); err != nil {
+			t.Fatal(err)
+		}
+		cmd = exec.CommandContext(ctx, binary, "--home", root, "--repo", sandbox, "--resume", "--plain", "--once", "--yes")
+		cmd.Dir = checkout
+	}
 	cmd.Env = append(os.Environ(), "HUDDLE_HOME="+root, "PATH="+bins+string(os.PathListSeparator)+os.Getenv("PATH"))
 	var out []byte
 	if concurrent {
@@ -167,7 +176,11 @@ printf 'session id: sandbox-fresh-session\n' >&2
 			t.Fatalf("real sandbox resume: %s %v", out, err)
 		}
 	}
-	if !strings.Contains(string(out), "PM (Claude Code), fresh session") || !strings.Contains(string(out), "state:dev-ready") {
+	expected := "PM (Claude Code), fresh session"
+	if legacy {
+		expected = "PM (Claude Code), resuming session legacy-pm-checkpoint"
+	}
+	if !strings.Contains(string(out), expected) || !strings.Contains(string(out), "state:dev-ready") {
 		t.Fatalf("wrong resumed turn: %s", out)
 	}
 	if multi {
@@ -198,6 +211,9 @@ printf 'session id: sandbox-fresh-session\n' >&2
 	data, err := os.ReadFile(argsFile)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if legacy && !strings.Contains(string(data), "--resume legacy-pm-checkpoint") {
+		t.Fatalf("legacy entry discarded its session: %s", data)
 	}
 	if multi {
 		lines := strings.Split(strings.TrimSpace(string(data)), "\n")

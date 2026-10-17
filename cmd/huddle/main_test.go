@@ -793,11 +793,14 @@ func TestRegistryListingDoesNotReadGitHub(t *testing.T) {
 	if err := st.Put(context.Background(), store.Project{ID: "ordinary", Name: "Example", Repo: "owner/repo", Phase: "building", Status: "ACTIVE"}); err != nil {
 		t.Fatal(err)
 	}
+	if err := st.Put(context.Background(), store.Project{ID: "palantir-entry", Name: "Palantir", Repo: "sohaibseniorswe-sys/palantir", Phase: "done", Status: "DONE"}); err != nil {
+		t.Fatal(err)
+	}
 	d.gh = &gh.Fake{ListErr: errors.New("must not query GitHub")}
 	if code := run(context.Background(), []string{"--list"}, d); code != 0 {
 		t.Fatalf("exit %d: %s", code, errout.String())
 	}
-	if !strings.Contains(out.String(), "Example · ACTIVE · building [ordinary]") {
+	if !strings.Contains(out.String(), "Example · ACTIVE · building [ordinary]") || !strings.Contains(out.String(), "Palantir · DONE · done [palantir-entry]") {
 		t.Fatalf("listing %s", out.String())
 	}
 }
