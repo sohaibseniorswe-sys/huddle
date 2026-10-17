@@ -425,3 +425,9 @@ On first open, legacy `projects/*.yaml` files under the selected state root are
 copied without changing their contents into `huddle-data/config/<id>.yaml`,
 registered by stable internal ID, and backed up in `migration-backup/`.
 Migration is safe to repeat. Original files remain available as a backup.
+
+Registry phases are `planning`, `published`, `building`, and `done`; their cached
+statuses are `PLANNED`, `ACTIVE`, or `DONE`. Opening a project refreshes runtime
+state from GitHub. A first `state:dev-ready` control is published; later ready
+handoffs belong to the active build. A done control or closed milestone derives
+`DONE`. Planning-only identities need no repository or directory.
